@@ -12,10 +12,12 @@ timeout_secs = 180
 
 # 仓库网页轮询：每 interval_secs 秒检查一次 commits.atom；访问 GitHub 超过 timeout_secs 秒就放弃本轮，等待下一轮。
 # interval_secs 最小按 30 秒执行；GitHub 网络不稳定时建议 60 秒轮询、10-15 秒超时。
+# 如果本机使用 Hiddify 等 HTTP 代理，可以填写 proxy，例如 http://127.0.0.1:12334；不使用代理可删除这一行。
 [poller]
 enabled = true
 interval_secs = 60
 timeout_secs = 10
+proxy = "http://127.0.0.1:12334"
 
 [[repositories]]
 # GitHub 名称：填写用户名或组织名，例如 https://github.com/owner/repo 里的 owner。

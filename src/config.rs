@@ -184,6 +184,8 @@ pub struct PollerConfig {
     pub interval_secs: u64,
     #[serde(default = "default_poll_timeout_secs")]
     pub timeout_secs: u64,
+    #[serde(default)]
+    pub proxy: Option<String>,
 }
 
 impl Default for PollerConfig {
@@ -192,6 +194,7 @@ impl Default for PollerConfig {
             enabled: true,
             interval_secs: default_poll_interval_secs(),
             timeout_secs: default_poll_timeout_secs(),
+            proxy: None,
         }
     }
 }

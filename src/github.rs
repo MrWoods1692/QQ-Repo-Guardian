@@ -4,6 +4,21 @@ use serde_json::Value;
 
 use crate::config::FeatureConfig;
 
+pub fn build_github_client(
+    proxy: Option<&str>,
+    timeout: std::time::Duration,
+) -> anyhow::Result<reqwest::Client> {
+    let mut builder = reqwest::Client::builder()
+        .user_agent("qq-repo-guardian")
+        .timeout(timeout);
+
+    if let Some(proxy) = proxy.filter(|value| !value.trim().is_empty()) {
+        builder = builder.proxy(reqwest::Proxy::all(proxy)?);
+    }
+
+    Ok(builder.build()?)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Notification {
     pub repository: String,
@@ -169,11 +184,13 @@ pub fn parse_github_repository_url(url: &str) -> Option<RepositorySlug> {
     })
 }
 
-pub async fn fetch_repo_card(url: &str) -> anyhow::Result<RepositoryCard> {
+pub async fn fetch_repo_card(
+    client: &reqwest::Client,
+    url: &str,
+) -> anyhow::Result<RepositoryCard> {
     let slug = parse_github_repository_url(url)
         .ok_or_else(|| anyhow::anyhow!("not a github repository url"))?;
     let api_url = format!("https://api.github.com/repos/{}/{}", slug.owner, slug.repo);
-    let client = reqwest::Client::new();
     let body = client
         .get(api_url)
         .header(reqwest::header::USER_AGENT, "qq-repo-guardian")

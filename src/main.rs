@@ -32,6 +32,10 @@ async fn main() -> anyhow::Result<()> {
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| format!("http://{}", address));
     let notifier = Arc::new(Notifier::with_public_base_url(bot, public_base_url.clone()));
+    let github_client = qq_repo_guardian::github::build_github_client(
+        config.poller.proxy.as_deref(),
+        Duration::from_secs(config.poller.timeout_secs.max(3)),
+    )?;
     if config.poller.enabled {
         let poll_interval = Duration::from_secs(config.poller.interval_secs.max(30));
         tracing::info!(
@@ -46,7 +50,7 @@ async fn main() -> anyhow::Result<()> {
         )?);
         tokio::spawn(poller.run(poll_interval));
     }
-    let state = http::AppState::new(github, notifier, public_base_url);
+    let state = http::AppState::new(github, notifier, github_client, public_base_url);
 
     tracing::info!(%address, "starting qq-repo-guardian");
     http::serve(address, state).await

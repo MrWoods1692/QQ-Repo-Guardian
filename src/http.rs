@@ -23,6 +23,7 @@ use crate::{
 pub struct AppState {
     github: Arc<GithubConfig>,
     notifier: Arc<Notifier>,
+    github_client: reqwest::Client,
     public_base_url: Arc<str>,
 }
 
@@ -30,11 +31,13 @@ impl AppState {
     pub fn new(
         github: Arc<GithubConfig>,
         notifier: Arc<Notifier>,
+        github_client: reqwest::Client,
         public_base_url: String,
     ) -> Self {
         Self {
             github,
             notifier,
+            github_client,
             public_base_url: public_base_url.into(),
         }
     }
@@ -148,8 +151,11 @@ struct CardQuery {
     url: String,
 }
 
-async fn github_card(Query(query): Query<CardQuery>) -> impl IntoResponse {
-    match github::fetch_repo_card(&query.url).await {
+async fn github_card(
+    State(state): State<AppState>,
+    Query(query): Query<CardQuery>,
+) -> impl IntoResponse {
+    match github::fetch_repo_card(&state.github_client, &query.url).await {
         Ok(card) => Html(github::render_repo_card_html(&card)).into_response(),
         Err(error) => (
             StatusCode::BAD_REQUEST,
@@ -159,8 +165,11 @@ async fn github_card(Query(query): Query<CardQuery>) -> impl IntoResponse {
     }
 }
 
-async fn github_card_svg(Query(query): Query<CardQuery>) -> impl IntoResponse {
-    match github::fetch_repo_card(&query.url).await {
+async fn github_card_svg(
+    State(state): State<AppState>,
+    Query(query): Query<CardQuery>,
+) -> impl IntoResponse {
+    match github::fetch_repo_card(&state.github_client, &query.url).await {
         Ok(card) => (
             StatusCode::OK,
             [(header::CONTENT_TYPE, "image/svg+xml; charset=utf-8")],
@@ -175,8 +184,11 @@ async fn github_card_svg(Query(query): Query<CardQuery>) -> impl IntoResponse {
     }
 }
 
-async fn github_card_png(Query(query): Query<CardQuery>) -> impl IntoResponse {
-    match github::fetch_repo_card(&query.url).await {
+async fn github_card_png(
+    State(state): State<AppState>,
+    Query(query): Query<CardQuery>,
+) -> impl IntoResponse {
+    match github::fetch_repo_card(&state.github_client, &query.url).await {
         Ok(card) => match github::render_repo_card_png(&card) {
             Ok(png) => (StatusCode::OK, [(header::CONTENT_TYPE, "image/png")], png).into_response(),
             Err(error) => (
@@ -337,6 +349,7 @@ mod tests {
         AppState::new(
             Arc::new(github),
             Arc::new(Notifier::new(Arc::new(MockBot::default()))),
+            reqwest::Client::new(),
             "http://127.0.0.1:8080".to_string(),
         )
     }

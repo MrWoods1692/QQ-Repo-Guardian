@@ -5,7 +5,7 @@ use tokio::sync::Mutex;
 
 use crate::{
     config::{GithubConfig, PollerConfig},
-    github::{ChangeCard, ChangeCommit, Feature, Notification},
+    github::{ChangeCard, ChangeCommit, Feature, Notification, build_github_client},
     notifier::Notifier,
 };
 
@@ -25,10 +25,10 @@ impl GithubPagePoller {
         Ok(Self {
             github,
             notifier,
-            client: reqwest::Client::builder()
-                .user_agent("qq-repo-guardian")
-                .timeout(Duration::from_secs(config.timeout_secs.max(3)))
-                .build()?,
+            client: build_github_client(
+                config.proxy.as_deref(),
+                Duration::from_secs(config.timeout_secs.max(3)),
+            )?,
             seen_entries: Mutex::new(HashMap::new()),
         })
     }

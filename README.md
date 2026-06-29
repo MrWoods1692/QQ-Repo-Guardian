@@ -89,9 +89,10 @@ privates = [123456789]
 enabled = true
 interval_secs = 60
 timeout_secs = 10
+proxy = "http://127.0.0.1:12334"
 ```
 
-`interval_secs` 最小按 30 秒执行；`timeout_secs` 默认 15 秒，最小按 3 秒执行。如果日志里出现 `GitHub page poll failed` 且包含 `Connection timed out`，说明当前机器访问 GitHub 超时，程序会等待下一轮继续重试。
+`interval_secs` 最小按 30 秒执行；`timeout_secs` 默认 15 秒，最小按 3 秒执行。`proxy` 可填写 Hiddify 等本机 HTTP 代理地址，例如 `http://127.0.0.1:12334`。如果日志里出现 `GitHub page poll failed` 且包含 `Connection timed out`，说明当前机器访问 GitHub 超时，程序会等待下一轮继续重试。
 
 ## 可选 GitHub Webhook
 
