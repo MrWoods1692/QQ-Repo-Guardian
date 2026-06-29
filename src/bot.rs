@@ -33,6 +33,12 @@ pub trait BotClient: Send + Sync {
 
 pub fn from_config(config: &BotConfig) -> anyhow::Result<Arc<dyn BotClient>> {
     match config {
+        BotConfig::Napcat {
+            endpoint,
+            token,
+            command,
+            timeout_secs,
+        } => napcat_client::start(endpoint, token, command.as_deref(), *timeout_secs),
         BotConfig::ProcQq {
             device_path,
             session_path,
@@ -48,6 +54,195 @@ pub fn from_config(config: &BotConfig) -> anyhow::Result<Arc<dyn BotClient>> {
             qsign_command.as_deref(),
             *qsign_timeout_secs,
         ),
+    }
+}
+
+mod napcat_client {
+    use super::*;
+    use anyhow::Context;
+    use std::time::Duration;
+
+    pub struct NapcatClient {
+        endpoint: String,
+        token: Option<String>,
+        client: reqwest::Client,
+    }
+
+    impl NapcatClient {
+        fn new(endpoint: String, token: Option<String>) -> anyhow::Result<Self> {
+            if endpoint.is_empty() {
+                anyhow::bail!("NapCat endpoint cannot be empty");
+            }
+
+            Ok(Self {
+                endpoint,
+                token,
+                client: reqwest::Client::builder().build()?,
+            })
+        }
+
+        async fn post(&self, action: &str, payload: serde_json::Value) -> anyhow::Result<()> {
+            let url = format!("{}/{}", self.endpoint, action);
+            let mut request = self
+                .client
+                .post(&url)
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_vec(&payload)?);
+            if let Some(token) = &self.token {
+                request = request.bearer_auth(token);
+            }
+
+            let status = request.send().await?.error_for_status()?.status();
+            tracing::debug!(%url, %status, "sent message through NapCat");
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl BotClient for NapcatClient {
+        async fn send(&self, target: &NotifyTarget, message: &str) -> anyhow::Result<()> {
+            match target {
+                NotifyTarget::Group { id } => {
+                    self.post(
+                        "send_group_msg",
+                        serde_json::json!({ "group_id": id, "message": message }),
+                    )
+                    .await
+                }
+                NotifyTarget::Private { id } => {
+                    self.post(
+                        "send_private_msg",
+                        serde_json::json!({ "user_id": id, "message": message }),
+                    )
+                    .await
+                }
+            }
+        }
+    }
+
+    pub fn start(
+        endpoint: &str,
+        token: &Option<String>,
+        command: Option<&str>,
+        timeout_secs: u64,
+    ) -> anyhow::Result<Arc<dyn BotClient>> {
+        let endpoint = configured_napcat_endpoint(endpoint)
+            .trim_end_matches('/')
+            .to_string();
+        let token = configured_napcat_token(token);
+        let command = configured_napcat_command(command);
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+
+        tokio::spawn(async move {
+            let result = async move {
+                tracing::info!(napcat_endpoint = %endpoint, "starting NapCat client");
+                ensure_napcat_ready(
+                    &endpoint,
+                    token.as_deref(),
+                    command.as_deref(),
+                    timeout_secs,
+                )
+                .await
+                .with_context(|| format!("NapCat HTTP API is not reachable at {endpoint}"))?;
+                Ok(Arc::new(NapcatClient::new(endpoint, token)?) as Arc<dyn BotClient>)
+            }
+            .await;
+            tx.send(result).ok();
+        });
+
+        rx.recv()?
+    }
+
+    fn configured_napcat_endpoint(configured: &str) -> String {
+        std::env::var("QRG_NAPCAT_ENDPOINT")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| configured.trim().to_string())
+    }
+
+    fn configured_napcat_token(configured: &Option<String>) -> Option<String> {
+        std::env::var("QRG_NAPCAT_TOKEN")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                configured
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+    }
+
+    fn configured_napcat_command(configured: Option<&str>) -> Option<String> {
+        std::env::var("QRG_NAPCAT_COMMAND")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                configured
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+    }
+
+    async fn ensure_napcat_ready(
+        endpoint: &str,
+        token: Option<&str>,
+        command: Option<&str>,
+        timeout_secs: u64,
+    ) -> anyhow::Result<()> {
+        if napcat_reachable(endpoint, token).await.is_ok() {
+            return Ok(());
+        }
+
+        let Some(command) = command else {
+            anyhow::bail!(
+                "请先启动 NapCat HTTP API 监听 {endpoint}，或设置 QRG_NAPCAT_COMMAND / [bot].command 让程序自动启动"
+            );
+        };
+
+        tracing::info!(%command, napcat_endpoint = %endpoint, "starting NapCat service");
+        let mut child = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .spawn()
+            .context("failed to start NapCat command")?;
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs.max(1));
+        loop {
+            if napcat_reachable(endpoint, token).await.is_ok() {
+                tracing::info!(napcat_endpoint = %endpoint, "NapCat HTTP API is reachable");
+                return Ok(());
+            }
+            if let Some(status) = child
+                .try_wait()
+                .context("failed to inspect NapCat command status")?
+            {
+                anyhow::bail!("NapCat command exited before {endpoint} became reachable: {status}");
+            }
+            if tokio::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                anyhow::bail!(
+                    "NapCat command started, but {endpoint} did not become reachable within {} seconds",
+                    timeout_secs.max(1)
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
+    async fn napcat_reachable(endpoint: &str, token: Option<&str>) -> anyhow::Result<()> {
+        let url = format!("{endpoint}/get_login_info");
+        let mut request = reqwest::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .build()?
+            .get(url);
+        if let Some(token) = token {
+            request = request.bearer_auth(token);
+        }
+        request.send().await?.error_for_status()?;
+        Ok(())
     }
 }
 

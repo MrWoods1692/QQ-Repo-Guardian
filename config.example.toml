@@ -1,6 +1,14 @@
 # 管理员 QQ 号：只有这些 QQ 可以使用 /repo-guardian ping 和 /repo-guardian repos。
 admins = [123456789]
 
+# NapCat 自动配置。默认 cargo run 会调用 ./napcat/start.sh 下载并启动 NapCat；首次运行只需要在终端扫码。
+[bot]
+type = "napcat"
+endpoint = "http://127.0.0.1:3000"
+command = "./napcat/start.sh"
+timeout_secs = 180
+# token = ""
+
 [[repositories]]
 # GitHub 名称：填写用户名或组织名，例如 https://github.com/owner/repo 里的 owner。
 github = "owner"

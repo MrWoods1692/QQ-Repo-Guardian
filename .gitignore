@@ -13,3 +13,16 @@ qrcode.png
 /qsign/txlib/
 /unidbg-fetch-qsign-*.zip
 /qsign/logs/
+/napcat/NapCat.Shell.zip
+/napcat/*.tmp.*
+/napcat/config/
+/napcat/static/
+/napcat/node_modules/
+/napcat/*.mjs
+/napcat/loadNapCat.js
+/napcat/qqnt.json
+/napcat/*.exe
+/napcat/*.dll
+/napcat/*.bat
+/napcat/launcher.cpp
+/napcat/libnapcat_launcher.so

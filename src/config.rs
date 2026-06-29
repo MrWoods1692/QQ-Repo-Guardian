@@ -96,6 +96,16 @@ fn default_bind() -> String {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum BotConfig {
+    Napcat {
+        #[serde(default = "default_napcat_endpoint")]
+        endpoint: String,
+        #[serde(default)]
+        token: Option<String>,
+        #[serde(default = "default_napcat_command")]
+        command: Option<String>,
+        #[serde(default = "default_napcat_timeout_secs")]
+        timeout_secs: u64,
+    },
     ProcQq {
         #[serde(default = "default_device_path")]
         device_path: String,
@@ -114,15 +124,25 @@ pub enum BotConfig {
 
 impl Default for BotConfig {
     fn default() -> Self {
-        Self::ProcQq {
-            device_path: default_device_path(),
-            session_path: default_session_path(),
-            qsign_endpoint: default_qsign_endpoint(),
-            qsign_key: default_qsign_key(),
-            qsign_command: Some("./qsign/start.sh".to_string()),
-            qsign_timeout_secs: default_qsign_timeout_secs(),
+        Self::Napcat {
+            endpoint: default_napcat_endpoint(),
+            token: None,
+            command: default_napcat_command(),
+            timeout_secs: default_napcat_timeout_secs(),
         }
     }
+}
+
+fn default_napcat_endpoint() -> String {
+    "http://127.0.0.1:3000".to_string()
+}
+
+fn default_napcat_command() -> Option<String> {
+    Some("./napcat/start.sh".to_string())
+}
+
+fn default_napcat_timeout_secs() -> u64 {
+    180
 }
 
 fn default_device_path() -> String {
