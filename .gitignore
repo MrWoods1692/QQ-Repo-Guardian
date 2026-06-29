@@ -15,12 +15,17 @@ qrcode.png
 /qsign/logs/
 /napcat/NapCat.Shell.zip
 /napcat/*.tmp.*
+/loadNapCat.js
 /napcat/config/
 /napcat/static/
+/napcat/native/
 /napcat/node_modules/
 /napcat/*.mjs
 /napcat/loadNapCat.js
+/napcat/conout-*.js
+/napcat/package.json
 /napcat/qqnt.json
+/napcat/worker/
 /napcat/*.exe
 /napcat/*.dll
 /napcat/*.bat

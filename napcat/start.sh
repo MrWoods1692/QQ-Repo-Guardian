@@ -13,6 +13,23 @@ QRG_SERVER_URL="${QRG_SERVER_URL:-http://127.0.0.1:8080}"
 DISPLAY_NUMBER="${QRG_NAPCAT_DISPLAY:-:1}"
 START_XVFB="${QRG_NAPCAT_XVFB:-auto}"
 QQ_BIN="${QRG_QQ_BIN:-}"
+NAPCAT_QQ="${QRG_NAPCAT_QQ:-${QRG_QQ_ACCOUNT:-}}"
+
+detect_quick_login_qq() {
+  if ! command -v strings >/dev/null 2>&1; then
+    return 0
+  fi
+
+  for db in \
+    "$HOME/.config/QQ/global/nt_db/login.db" \
+    "$HOME/.config/QQ/nt_qq/global/nt_db/login.db"
+  do
+    if [ -f "$db" ]; then
+      strings "$db" 2>/dev/null | sed -n 's/.*\([1-9][0-9]\{4,11\}\).*/\1/p' | head -n 1
+      return 0
+    fi
+  done
+}
 
 mkdir -p "$NAPCAT_DIR"
 
@@ -70,6 +87,10 @@ if [ -z "$QQ_BIN" ] || [ ! -x "$QQ_BIN" ]; then
   exit 1
 fi
 
+if [ -z "$NAPCAT_QQ" ]; then
+  NAPCAT_QQ=$(detect_quick_login_qq)
+fi
+
 PORT=$(printf '%s\n' "$NAPCAT_ENDPOINT" | sed -n 's#.*://[^:/]*:\([0-9][0-9]*\).*#\1#p')
 if [ -z "$PORT" ]; then
   PORT=3000
@@ -124,5 +145,12 @@ elif [ -z "${DISPLAY:-}" ]; then
 fi
 
 echo "Starting NapCat with $QQ_BIN"
+if [ -n "$NAPCAT_QQ" ]; then
+  echo "Using NapCat quick login account $NAPCAT_QQ."
+  echo "If quick login fails, scan the QR code shown by NapCat in this terminal."
+  exec env NAPCAT_BOOTMAIN="$ROOT_DIR" LD_PRELOAD="$NAPCAT_DIR/libnapcat_launcher.so" "$QQ_BIN" --no-sandbox -q "$NAPCAT_QQ" "$@"
+fi
+
 echo "If this is the first run, scan the QR code shown by NapCat in this terminal."
+echo "After a successful scan, set QRG_NAPCAT_QQ=<your QQ number> if automatic quick login detection misses it."
 exec env NAPCAT_BOOTMAIN="$ROOT_DIR" LD_PRELOAD="$NAPCAT_DIR/libnapcat_launcher.so" "$QQ_BIN" --no-sandbox "$@"

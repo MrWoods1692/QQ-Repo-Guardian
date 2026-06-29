@@ -2,6 +2,7 @@
 admins = [123456789]
 
 # NapCat 自动配置。默认 cargo run 会调用 ./napcat/start.sh 下载并启动 NapCat；首次运行只需要在终端扫码。
+# 扫码成功后会自动尝试快速登录；如自动识别不到账号，可运行：QRG_NAPCAT_QQ=你的QQ号 cargo run。
 [bot]
 type = "napcat"
 endpoint = "http://127.0.0.1:3000"
