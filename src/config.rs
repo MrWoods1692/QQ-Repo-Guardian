@@ -43,6 +43,40 @@ pub enum BotConfig {
         endpoint: String,
         access_token: Option<String>,
     },
+    ProcQq {
+        #[serde(default = "default_device_path")]
+        device_path: String,
+        #[serde(default = "default_session_path")]
+        session_path: String,
+        #[serde(default = "default_qsign_endpoint")]
+        qsign_endpoint: String,
+        #[serde(default = "default_qsign_key")]
+        qsign_key: String,
+        #[serde(default)]
+        qsign_command: Option<String>,
+        #[serde(default = "default_qsign_timeout_secs")]
+        qsign_timeout_secs: u64,
+    },
+}
+
+fn default_device_path() -> String {
+    "device.json".to_string()
+}
+
+fn default_session_path() -> String {
+    "session.token".to_string()
+}
+
+fn default_qsign_endpoint() -> String {
+    "http://127.0.0.1:8081".to_string()
+}
+
+fn default_qsign_key() -> String {
+    "114514".to_string()
+}
+
+fn default_qsign_timeout_secs() -> u64 {
+    60
 }
 
 #[derive(Debug, Clone, Deserialize)]

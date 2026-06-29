@@ -1,2 +1,10 @@
 /target
-config.toml
+/config.toml
+device.json
+session.token
+qrcode.png
+/qsign/*.jar
+/qsign/*.tmp.*
+/qsign/source.env
+/qsign/txlib/
+/qsign/logs/

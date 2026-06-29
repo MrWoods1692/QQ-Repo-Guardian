@@ -1,0 +1,26 @@
+[package]
+name = "ricq-guild"
+version = "0.1.20"
+edition = "2021"
+description = "ricq-guild"
+license = "MPL-2.0"
+homepage = "https://github.com/lz1998/ricq"
+repository = "https://github.com/lz1998/ricq"
+readme = "README.md"
+keywords = ["qq", "protocol", "android", "mirai"]
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.htmlc
+
+[dependencies]
+bytes.workspace = true
+prost = { workspace = true, features = ["std"], default-features = false }
+prost-types.workspace = true
+tracing.workspace = true
+dynamic-protobuf.workspace = true
+rand.workspace = true
+ricq = { path = "../ricq" }
+ricq-core = { path = "../ricq-core" }
+tokio = { workspace = true, features = ["sync"] }
+
+
+[build-dependencies]
+prost-build = "0.9"

@@ -1,0 +1,44 @@
+[workspace]
+resolver = "2"
+members = [
+	"ricq",
+	"ricq-core",
+	"ricq-guild"
+]
+
+[workspace.dependencies]
+async-trait = "0.1"
+bytes = "1"
+cached = { version = "0.35", default-features = false }
+derivative = "2"
+flate2 = { version = "1", features = ["rust_backend"], default-features = false }
+futures-util = "0.3"
+image = "0.24"
+jcers = "0.1"
+md5 = "0.7"
+prost = { version = "0.9", default-features = false }
+rand = "0.8"
+serde = "1"
+tokio = "1"
+tokio-util = "0.7"
+tracing = "0.1"
+
+byteorder = "1"
+generic-array = "0.14"
+p256 = { version = "0.10", default-features = false }
+prost-types = "0.9"
+thiserror = "1"
+
+dynamic-protobuf = "0"
+reqwest = "0.11"
+crypto-common = "0.1"
+serde_json = "1.0"
+block-padding = "0.3"
+spki = "0.7"
+base64 = "0.21"
+aes = "0.8"
+rsa = "0.9"
+x509-cert = "0.2"
+chrono = "0.4"
+cbc = "0.1"
+sha2 = "0.10"

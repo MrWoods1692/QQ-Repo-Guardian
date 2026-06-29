@@ -1,0 +1,15 @@
+[package]
+name = "password_login"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ricq = { path = "../../ricq" }
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+futures-util = "0.3"
+tracing = "0.1"
+serde_json = "1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "local-time"] }
+time = { version = "0.3", features = ["macros", "local-offset"] }
+rand = "0.8"

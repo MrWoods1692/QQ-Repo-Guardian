@@ -1,0 +1,34 @@
+[package]
+name = "ricq"
+version = "0.1.20"
+edition = "2024"
+description = "Android IM protocol"
+license = "MPL-2.0"
+homepage = "https://github.com/lz1998/ricq"
+repository = "https://github.com/lz1998/ricq"
+readme = "README.md"
+keywords = ["qq", "protocol", "android", "mirai"]
+
+[features]
+default = []
+image-detail = ["image"]
+
+[dependencies]
+ricq-core = { path = "../ricq-core" }
+async-trait.workspace = true
+bytes.workspace = true
+cached = { workspace = true, default-features = false }
+derivative.workspace = true
+flate2 = { workspace = true, features = ["rust_backend"], default-features = false }
+futures-util = { workspace = true, features = ["sink"] }
+image = { workspace = true, optional = true }
+jcers.workspace = true
+md5.workspace = true
+prost = { workspace = true, features = ["std"], default-features = false }
+rand.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["rt", "macros", "net", "time"] }
+tokio-util = { workspace = true, features = ["codec"] }
+tracing.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+async-recursion = "1.0"
