@@ -174,6 +174,16 @@ mod proc_qq_client {
     }
 
     async fn qq_login_addresses(upstream_address: SocketAddr) -> Vec<SocketAddr> {
+        if qq_login_dns_only() {
+            let addresses = resolve_qq_login_dns().await;
+            if !addresses.is_empty() {
+                return addresses;
+            }
+            tracing::warn!(
+                "QRG_QQ_LOGIN_DNS_ONLY is enabled, but msfwifi.3g.qq.com did not resolve; falling back to built-in QQ login addresses"
+            );
+        }
+
         let mut addresses = vec![upstream_address];
         addresses.extend([
             SocketAddr::new(Ipv4Addr::new(42, 81, 172, 81).into(), 80),
@@ -183,12 +193,24 @@ mod proc_qq_client {
             SocketAddr::new(Ipv4Addr::new(114, 221, 144, 215).into(), 80),
             SocketAddr::new(Ipv4Addr::new(42, 81, 172, 22).into(), 80),
         ]);
-        if let Ok(resolved) = tokio::net::lookup_host(("msfwifi.3g.qq.com", 8080)).await {
-            addresses.extend(resolved);
-        }
+        addresses.extend(resolve_qq_login_dns().await);
         addresses.sort_unstable();
         addresses.dedup();
         addresses
+    }
+
+    async fn resolve_qq_login_dns() -> Vec<SocketAddr> {
+        tokio::net::lookup_host(("msfwifi.3g.qq.com", 8080))
+            .await
+            .map(|resolved| resolved.collect())
+            .unwrap_or_default()
+    }
+
+    fn qq_login_dns_only() -> bool {
+        std::env::var("QRG_QQ_LOGIN_DNS_ONLY")
+            .ok()
+            .map(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"))
+            .unwrap_or(false)
     }
 
     async fn connect_fastest(

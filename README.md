@@ -41,7 +41,7 @@ cargo run -- --config config.toml
 
 启动时会先删除旧的 `qrcode.png`，首次登录会把二维码打印到终端，用手机 QQ 扫码确认后会把设备信息保存到 `device.json`，把登录态保存到 `session.token`。后续启动会优先尝试使用 `session.token` 自动登录。
 
-默认 `qsign_command` 指向本仓库的 `qsign/start.sh`。脚本会优先使用完整 qsign zip，安装服务本体和 `txlib/<版本>` 资源；也支持手动放置 `qsign/bin/unidbg-fetch-qsign` 或 `qsign/unidbg-fetch-qsign.jar`。首次下载完整包可能较慢，所以默认 `qsign_timeout_secs = 900`。也可以用环境变量临时覆盖：`QRG_QSIGN_ENDPOINT`、`QRG_QSIGN_KEY`、`QRG_QSIGN_COMMAND`、`QRG_QSIGN_PORT`、`QRG_QSIGN_DOWNLOAD_URL`、`QRG_QSIGN_DOWNLOAD_URLS`、`QRG_QSIGN_BASE_PATH`、`QRG_QSIGN_PREFERRED_VERSION`。如果 20 秒后登录仍未完成且终端没有二维码，先检查当前网络是否能连通 QQ 登录服务器；如果二维码已出现但日志反复出现 `failed to sign packet` 或 `Connection refused`，说明 `qsign_endpoint` 对应的 `/sign` 接口不可用；如果二维码已确认后出现 `二维码状态加载失败` 或 `network error`，说明 QQ 登录状态查询阶段网络失败，通常需要检查当前机器的出口网络、代理或防火墙；如果出现设备锁或滑块验证，请按终端日志里的地址完成验证。
+默认 `qsign_command` 指向本仓库的 `qsign/start.sh`。脚本会优先使用完整 qsign zip，安装服务本体和 `txlib/<版本>` 资源；也支持手动放置 `qsign/bin/unidbg-fetch-qsign` 或 `qsign/unidbg-fetch-qsign.jar`。首次下载完整包可能较慢，所以默认 `qsign_timeout_secs = 900`。也可以用环境变量临时覆盖：`QRG_QSIGN_ENDPOINT`、`QRG_QSIGN_KEY`、`QRG_QSIGN_COMMAND`、`QRG_QSIGN_PORT`、`QRG_QSIGN_DOWNLOAD_URL`、`QRG_QSIGN_DOWNLOAD_URLS`、`QRG_QSIGN_BASE_PATH`、`QRG_QSIGN_PREFERRED_VERSION`。如果 20 秒后登录仍未完成且终端没有二维码，先检查当前网络是否能连通 QQ 登录服务器；如果二维码已出现但日志反复出现 `failed to sign packet` 或 `Connection refused`，说明 `qsign_endpoint` 对应的 `/sign` 接口不可用；如果二维码已确认后出现 `二维码状态加载失败` 或 `network error`，说明 QQ 登录状态查询阶段网络失败，通常需要检查当前机器的出口网络、代理或防火墙；如果当前网络只有 `msfwifi.3g.qq.com:8080` 可通，可以用 `QRG_QQ_LOGIN_DNS_ONLY=1 cargo run` 只使用 QQ 域名解析地址登录；如果出现设备锁或滑块验证，请按终端日志里的地址完成验证。
 
 ## 仓库通知配置
 
