@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use serde_json::Value;
+use std::io::Cursor;
 
 use crate::config::FeatureConfig;
 
@@ -281,6 +282,62 @@ pub fn render_repo_card_svg(card: &RepositoryCard) -> String {
     )
 }
 
+pub fn render_repo_card_png(card: &RepositoryCard) -> anyhow::Result<Vec<u8>> {
+    let mut canvas = PngCanvas::new(760, 420, [238, 242, 255, 255]);
+    canvas.gradient([14, 165, 233, 255], [236, 72, 153, 255]);
+    canvas.rect(36, 36, 688, 348, [250, 252, 255, 244]);
+    canvas.rect(54, 54, 92, 92, [219, 234, 254, 255]);
+    canvas.text(74, 92, "GH", 4, [29, 78, 216, 255]);
+    canvas.text(164, 74, &card.owner, 3, [100, 116, 139, 255]);
+    canvas.text(164, 112, &card.name, 5, [15, 23, 42, 255]);
+    canvas.text(164, 150, &card.url, 2, [37, 99, 235, 255]);
+    canvas.text(54, 214, "ABOUT", 3, [51, 65, 85, 255]);
+    canvas.text(
+        54,
+        246,
+        &truncate_for_card(&card.about, 82),
+        3,
+        [71, 85, 105, 255],
+    );
+    draw_metric(
+        &mut canvas,
+        54,
+        286,
+        "STARS",
+        &format_count(card.stars),
+        [239, 246, 255, 255],
+        [29, 78, 216, 255],
+    );
+    draw_metric(
+        &mut canvas,
+        218,
+        286,
+        "FORKS",
+        &format_count(card.forks),
+        [240, 253, 244, 255],
+        [21, 128, 61, 255],
+    );
+    draw_metric(
+        &mut canvas,
+        382,
+        286,
+        "ISSUES",
+        &format_count(card.issues),
+        [255, 247, 237, 255],
+        [194, 65, 12, 255],
+    );
+    draw_metric(
+        &mut canvas,
+        546,
+        286,
+        "RECENT",
+        &card.recent_commit_time,
+        [253, 242, 248, 255],
+        [190, 24, 93, 255],
+    );
+    canvas.finish_png()
+}
+
 pub fn render_change_card_svg(card: &ChangeCard) -> String {
     let commit_rows = render_change_commit_rows(&card.commits);
     format!(
@@ -328,6 +385,59 @@ pub fn render_change_card_svg(card: &ChangeCard) -> String {
         commit_rows,
         escape_html(&truncate_for_card(&card.url, 78)),
     )
+}
+
+pub fn render_change_card_png(card: &ChangeCard) -> anyhow::Result<Vec<u8>> {
+    let mut canvas = PngCanvas::new(820, 460, [238, 242, 255, 255]);
+    canvas.gradient([8, 145, 178, 255], [124, 58, 237, 255]);
+    canvas.rect(38, 38, 744, 384, [250, 252, 255, 246]);
+    canvas.rect(64, 66, 156, 38, [219, 234, 254, 255]);
+    canvas.text(84, 91, "REPO CHANGE", 2, [29, 78, 216, 255]);
+    canvas.text(64, 146, &card.title, 5, [15, 23, 42, 255]);
+    canvas.text(64, 181, &card.repository, 3, [71, 85, 105, 255]);
+    draw_metric(
+        &mut canvas,
+        64,
+        216,
+        "BRANCH",
+        &card.branch,
+        [239, 246, 255, 255],
+        [29, 78, 216, 255],
+    );
+    draw_metric(
+        &mut canvas,
+        248,
+        216,
+        "ACTOR",
+        &card.actor,
+        [240, 253, 244, 255],
+        [21, 128, 61, 255],
+    );
+    canvas.rect(432, 216, 286, 68, [253, 242, 248, 255]);
+    canvas.text(454, 245, "SUMMARY", 2, [190, 24, 93, 255]);
+    canvas.text(454, 269, &card.summary, 3, [15, 23, 42, 255]);
+    canvas.text(64, 326, "RECENT COMMITS", 3, [51, 65, 85, 255]);
+    if card.commits.is_empty() {
+        canvas.text(
+            64,
+            356,
+            "No commit detail available.",
+            3,
+            [100, 116, 139, 255],
+        );
+    } else {
+        for (index, commit) in card.commits.iter().take(3).enumerate() {
+            canvas.text(
+                64,
+                356 + index as u32 * 25,
+                &format!("{} - {}", commit.message, commit.author),
+                3,
+                [15, 23, 42, 255],
+            );
+        }
+    }
+    canvas.text(64, 398, &card.url, 2, [37, 99, 235, 255]);
+    canvas.finish_png()
 }
 
 pub fn change_card_query(card: &ChangeCard) -> String {
@@ -406,6 +516,169 @@ fn render_change_commit_rows(commits: &[ChangeCommit]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n  ")
+}
+
+fn draw_metric(
+    canvas: &mut PngCanvas,
+    x: u32,
+    y: u32,
+    label: &str,
+    value: &str,
+    background: [u8; 4],
+    accent: [u8; 4],
+) {
+    canvas.rect(x, y, 146, 64, background);
+    canvas.text(x + 22, y + 28, label, 2, accent);
+    canvas.text(x + 22, y + 54, value, 3, [15, 23, 42, 255]);
+}
+
+struct PngCanvas {
+    image: image::RgbaImage,
+}
+
+impl PngCanvas {
+    fn new(width: u32, height: u32, color: [u8; 4]) -> Self {
+        Self {
+            image: image::RgbaImage::from_pixel(width, height, image::Rgba(color)),
+        }
+    }
+
+    fn gradient(&mut self, start: [u8; 4], end: [u8; 4]) {
+        let width = self.image.width().saturating_sub(1).max(1);
+        let height = self.image.height().saturating_sub(1).max(1);
+        for y in 0..self.image.height() {
+            for x in 0..self.image.width() {
+                let ratio = (x + y) as f32 / (width + height) as f32;
+                let color = blend(start, end, ratio);
+                self.image.put_pixel(x, y, image::Rgba(color));
+            }
+        }
+    }
+
+    fn rect(&mut self, x: u32, y: u32, width: u32, height: u32, color: [u8; 4]) {
+        let max_x = (x + width).min(self.image.width());
+        let max_y = (y + height).min(self.image.height());
+        for py in y..max_y {
+            for px in x..max_x {
+                self.image.put_pixel(px, py, image::Rgba(color));
+            }
+        }
+    }
+
+    fn text(&mut self, x: u32, y: u32, value: &str, scale: u32, color: [u8; 4]) {
+        let mut cursor = x;
+        for ch in normalize_text(value).chars().take(96) {
+            if ch == ' ' {
+                cursor += 4 * scale;
+                continue;
+            }
+            draw_char(
+                &mut self.image,
+                cursor,
+                y.saturating_sub(7 * scale),
+                ch,
+                scale,
+                color,
+            );
+            cursor += 6 * scale;
+            if cursor + 5 * scale >= self.image.width() {
+                break;
+            }
+        }
+    }
+
+    fn finish_png(self) -> anyhow::Result<Vec<u8>> {
+        let mut output = Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(self.image)
+            .write_to(&mut output, image::ImageOutputFormat::Png)?;
+        Ok(output.into_inner())
+    }
+}
+
+fn blend(start: [u8; 4], end: [u8; 4], ratio: f32) -> [u8; 4] {
+    let mut color = [0; 4];
+    for index in 0..4 {
+        color[index] =
+            (start[index] as f32 + (end[index] as f32 - start[index] as f32) * ratio) as u8;
+    }
+    color
+}
+
+fn normalize_text(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| if ch.is_ascii() { ch } else { '?' })
+        .collect()
+}
+
+fn draw_char(image: &mut image::RgbaImage, x: u32, y: u32, ch: char, scale: u32, color: [u8; 4]) {
+    for (row_index, row) in glyph(ch).iter().enumerate() {
+        for col in 0..5 {
+            if row & (1 << (4 - col)) == 0 {
+                continue;
+            }
+            let px = x + col * scale;
+            let py = y + row_index as u32 * scale;
+            for sy in 0..scale {
+                for sx in 0..scale {
+                    let target_x = px + sx;
+                    let target_y = py + sy;
+                    if target_x < image.width() && target_y < image.height() {
+                        image.put_pixel(target_x, target_y, image::Rgba(color));
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn glyph(ch: char) -> [u8; 7] {
+    match ch.to_ascii_uppercase() {
+        'A' => [0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11],
+        'B' => [0x1e, 0x11, 0x11, 0x1e, 0x11, 0x11, 0x1e],
+        'C' => [0x0e, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0e],
+        'D' => [0x1e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1e],
+        'E' => [0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x1f],
+        'F' => [0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x10],
+        'G' => [0x0e, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0f],
+        'H' => [0x11, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11],
+        'I' => [0x0e, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0e],
+        'J' => [0x01, 0x01, 0x01, 0x01, 0x11, 0x11, 0x0e],
+        'K' => [0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11],
+        'L' => [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1f],
+        'M' => [0x11, 0x1b, 0x15, 0x15, 0x11, 0x11, 0x11],
+        'N' => [0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11],
+        'O' => [0x0e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e],
+        'P' => [0x1e, 0x11, 0x11, 0x1e, 0x10, 0x10, 0x10],
+        'Q' => [0x0e, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0d],
+        'R' => [0x1e, 0x11, 0x11, 0x1e, 0x14, 0x12, 0x11],
+        'S' => [0x0f, 0x10, 0x10, 0x0e, 0x01, 0x01, 0x1e],
+        'T' => [0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04],
+        'U' => [0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e],
+        'V' => [0x11, 0x11, 0x11, 0x11, 0x11, 0x0a, 0x04],
+        'W' => [0x11, 0x11, 0x11, 0x15, 0x15, 0x15, 0x0a],
+        'X' => [0x11, 0x11, 0x0a, 0x04, 0x0a, 0x11, 0x11],
+        'Y' => [0x11, 0x11, 0x0a, 0x04, 0x04, 0x04, 0x04],
+        'Z' => [0x1f, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1f],
+        '0' => [0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e],
+        '1' => [0x04, 0x0c, 0x04, 0x04, 0x04, 0x04, 0x0e],
+        '2' => [0x0e, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1f],
+        '3' => [0x1e, 0x01, 0x01, 0x0e, 0x01, 0x01, 0x1e],
+        '4' => [0x02, 0x06, 0x0a, 0x12, 0x1f, 0x02, 0x02],
+        '5' => [0x1f, 0x10, 0x10, 0x1e, 0x01, 0x01, 0x1e],
+        '6' => [0x0e, 0x10, 0x10, 0x1e, 0x11, 0x11, 0x0e],
+        '7' => [0x1f, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08],
+        '8' => [0x0e, 0x11, 0x11, 0x0e, 0x11, 0x11, 0x0e],
+        '9' => [0x0e, 0x11, 0x11, 0x0f, 0x01, 0x01, 0x0e],
+        '/' => [0x01, 0x01, 0x02, 0x04, 0x08, 0x10, 0x10],
+        ':' => [0x00, 0x04, 0x04, 0x00, 0x04, 0x04, 0x00],
+        '.' => [0x00, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x0c],
+        '-' => [0x00, 0x00, 0x00, 0x1f, 0x00, 0x00, 0x00],
+        '_' => [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f],
+        '#' => [0x0a, 0x1f, 0x0a, 0x0a, 0x1f, 0x0a, 0x00],
+        '?' => [0x0e, 0x11, 0x01, 0x02, 0x04, 0x00, 0x04],
+        _ => [0x00, 0x00, 0x0e, 0x01, 0x0f, 0x11, 0x0f],
+    }
 }
 
 fn format_count(count: u64) -> String {
@@ -701,5 +974,46 @@ mod tests {
         assert!(svg.contains("15.3K"));
         assert!(svg.contains("Issues"));
         assert!(svg.contains("A useful project"));
+    }
+
+    #[test]
+    fn renders_repo_card_png() {
+        let card = RepositoryCard {
+            owner: "owner".to_string(),
+            name: "project".to_string(),
+            full_name: "owner/project".to_string(),
+            url: "https://github.com/owner/project".to_string(),
+            avatar_url: "https://avatars.githubusercontent.com/u/1?v=4".to_string(),
+            about: "A useful project".to_string(),
+            stars: 15320,
+            forks: 821,
+            issues: 12,
+            recent_commit_time: "2026-06-29".to_string(),
+        };
+
+        let png = render_repo_card_png(&card).unwrap();
+
+        assert!(png.starts_with(&[0x89, b'P', b'N', b'G']));
+    }
+
+    #[test]
+    fn renders_change_card_png() {
+        let card = ChangeCard {
+            title: "新的代码提交".to_string(),
+            repository: "owner/project".to_string(),
+            branch: "main".to_string(),
+            actor: "alice".to_string(),
+            summary: "2 commits pushed".to_string(),
+            url: "https://github.com/owner/project/compare/a...b".to_string(),
+            commits: vec![ChangeCommit {
+                message: "fix card".to_string(),
+                author: "alice".to_string(),
+                url: "https://github.com/owner/project/commit/b".to_string(),
+            }],
+        };
+
+        let png = render_change_card_png(&card).unwrap();
+
+        assert!(png.starts_with(&[0x89, b'P', b'N', b'G']));
     }
 }

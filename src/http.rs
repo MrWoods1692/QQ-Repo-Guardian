@@ -47,7 +47,9 @@ pub fn router(state: AppState) -> Router {
         .route("/qq/event", post(qq_event))
         .route("/github/card", get(github_card))
         .route("/github/card.svg", get(github_card_svg))
+        .route("/github/card.png", get(github_card_png))
         .route("/github/change.svg", get(github_change_svg))
+        .route("/github/change.png", get(github_change_png))
         .with_state(state)
 }
 
@@ -173,6 +175,24 @@ async fn github_card_svg(Query(query): Query<CardQuery>) -> impl IntoResponse {
     }
 }
 
+async fn github_card_png(Query(query): Query<CardQuery>) -> impl IntoResponse {
+    match github::fetch_repo_card(&query.url).await {
+        Ok(card) => match github::render_repo_card_png(&card) {
+            Ok(png) => (StatusCode::OK, [(header::CONTENT_TYPE, "image/png")], png).into_response(),
+            Err(error) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": error.to_string() })),
+            )
+                .into_response(),
+        },
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 async fn github_change_svg(
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
@@ -186,6 +206,23 @@ async fn github_change_svg(
         github::render_change_card_svg(&card),
     )
         .into_response()
+}
+
+async fn github_change_png(
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let encoded = url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(query.iter())
+        .finish();
+    let card = github::change_card_from_query(&encoded);
+    match github::render_change_card_png(&card) {
+        Ok(png) => (StatusCode::OK, [(header::CONTENT_TYPE, "image/png")], png).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
 }
 
 fn qq_reply(config: &GithubConfig, event: &QqEvent, public_base_url: &str) -> Option<String> {
@@ -223,7 +260,7 @@ fn qq_reply(config: &GithubConfig, event: &QqEvent, public_base_url: &str) -> Op
 fn render_qq_repo_card_message(public_base_url: &str, url: &str) -> String {
     let encoded_url = url::form_urlencoded::byte_serialize(url.as_bytes()).collect::<String>();
     format!(
-        "[CQ:image,file={}/github/card.svg?url={}]",
+        "[CQ:image,file={}/github/card.png?url={}]",
         public_base_url.trim_end_matches('/'),
         encoded_url
     )

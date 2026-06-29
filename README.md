@@ -27,7 +27,9 @@ cargo run
 - `POST /qq/event` QQ 消息事件入口。
 - `GET /github/card?url=https://github.com/owner/repo` GitHub 仓库卡片 HTML 预览。
 - `GET /github/card.svg?url=https://github.com/owner/repo` GitHub 仓库卡片图片。
-- `GET /github/change.svg?...` GitHub 仓库变化通知图片，用于 Push webhook 和网页轮询推送。
+- `GET /github/card.png?url=https://github.com/owner/repo` GitHub 仓库卡片 PNG 图片，QQ 消息默认使用这个地址。
+- `GET /github/change.svg?...` GitHub 仓库变化通知 SVG 图片。
+- `GET /github/change.png?...` GitHub 仓库变化通知 PNG 图片，Push webhook 和网页轮询推送默认使用这个地址。
 
 ## NapCat 配置
 

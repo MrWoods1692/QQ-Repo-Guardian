@@ -131,7 +131,7 @@ mod tests {
         assert!(
             messages[0]
                 .1
-                .starts_with("[CQ:image,file=http://127.0.0.1:8080/github/change.svg?")
+                .starts_with("[CQ:image,file=http://127.0.0.1:8080/github/change.png?")
         );
         assert!(messages[0].1.contains("fallback"));
     }
@@ -189,7 +189,7 @@ impl Notifier {
     fn render_message(&self, notification: &Notification) -> String {
         if let (Some(base_url), Some(card)) = (&self.public_base_url, &notification.card) {
             return format!(
-                "[CQ:image,file={}/github/change.svg?{}]\n{}",
+                "[CQ:image,file={}/github/change.png?{}]\n{}",
                 base_url.trim_end_matches('/'),
                 github::change_card_query(card),
                 notification.message
