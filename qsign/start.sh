@@ -5,6 +5,7 @@ ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 PORT="${QRG_QSIGN_PORT:-8081}"
 KEY="${QRG_QSIGN_KEY:-114514}"
 BASE_PATH="${QRG_QSIGN_BASE_PATH:-$ROOT_DIR/txlib}"
+PREFERRED_TXLIB_VERSION="${QRG_QSIGN_PREFERRED_VERSION:-8.9.85}"
 JAR_PATH="${QRG_QSIGN_JAR:-$ROOT_DIR/unidbg-fetch-qsign.jar}"
 BIN_PATH="${QRG_QSIGN_BIN:-$ROOT_DIR/bin/unidbg-fetch-qsign}"
 RUNTIME_BASE_PATH="$ROOT_DIR/.runtime/txlib"
@@ -31,6 +32,11 @@ base_path_is_ready() {
 select_base_path() {
   if base_path_is_ready "$BASE_PATH"; then
     printf '%s\n' "$BASE_PATH"
+    return 0
+  fi
+
+  if base_path_is_ready "$BASE_PATH/$PREFERRED_TXLIB_VERSION"; then
+    printf '%s\n' "$BASE_PATH/$PREFERRED_TXLIB_VERSION"
     return 0
   fi
 

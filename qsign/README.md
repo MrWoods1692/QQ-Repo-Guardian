@@ -16,13 +16,14 @@ QQ Repo Guardian 会在 `cargo run` 时自动调用 `./qsign/start.sh` 启动 qs
 - `qsign/txlib/8.9.76/dtconfig.json`
 
 启动参数 `--basePath` 会指向具体版本目录，也就是 `qsign/txlib/8.9.76`，不是 `qsign/txlib` 根目录。
-没有显式设置 `QRG_QSIGN_BASE_PATH` 时，`start.sh` 会自动选择最高版本的可用 `txlib`，避免 QQ 登录时使用过低协议版本。
+没有显式设置 `QRG_QSIGN_BASE_PATH` 时，`start.sh` 默认优先选择 `8.9.85`，这个版本通常比最新 `txlib` 更稳定；如果本地没有该版本，再自动选择最高版本的可用 `txlib`。
 
 也可以用环境变量覆盖：
 
 - `QRG_QSIGN_JAR=/path/to/unidbg-fetch-qsign.jar`
 - `QRG_QSIGN_BIN=/path/to/unidbg-fetch-qsign`
 - `QRG_QSIGN_BASE_PATH=/path/to/txlib/version`，也可以指向包含版本子目录的 `txlib` 根目录
+- `QRG_QSIGN_PREFERRED_VERSION=8.9.85`，在 `QRG_QSIGN_BASE_PATH` 指向 `txlib` 根目录时指定优先版本
 - `QRG_QSIGN_DOWNLOAD_URL=https://.../unidbg-fetch-qsign.jar`
 - `QRG_QSIGN_DOWNLOAD_URLS=https://.../a.zip`，多地址时每行一个
 - `QRG_QSIGN_SHA256=<下载文件的 sha256>`
