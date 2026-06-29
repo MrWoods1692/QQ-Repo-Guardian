@@ -99,6 +99,7 @@ struct QqEvent {
     notice_type: Option<String>,
     message: Option<String>,
     user_id: Option<i64>,
+    self_id: Option<i64>,
     group_id: Option<i64>,
 }
 
@@ -152,7 +153,9 @@ fn qq_reply(config: &GithubConfig, event: &QqEvent) -> Option<String> {
     }
 
     let message = event.message.as_deref()?;
-    if message.contains("[CQ:at") {
+    if let Some(self_id) = event.self_id
+        && message_mentions_qq(message, self_id)
+    {
         return Some(format!("[CQ:at,qq={}]", event.user_id?));
     }
 
@@ -173,6 +176,20 @@ fn qq_reply(config: &GithubConfig, event: &QqEvent) -> Option<String> {
     }
 
     find_github_url(message).and_then(github::render_repo_card)
+}
+
+fn message_mentions_qq(message: &str, qq: i64) -> bool {
+    let target = qq.to_string();
+    message.split("[CQ:at,").skip(1).any(|segment| {
+        segment
+            .split_once(']')
+            .map(|(params, _)| {
+                params
+                    .split(',')
+                    .any(|param| param.trim() == format!("qq={target}"))
+            })
+            .unwrap_or(false)
+    })
 }
 
 fn find_github_url(message: &str) -> Option<&str> {
@@ -265,5 +282,35 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[test]
+    fn replies_only_when_message_mentions_self() {
+        let config = test_state().github.as_ref().clone();
+        let event = QqEvent {
+            post_type: Some("message".to_string()),
+            notice_type: None,
+            message: Some("[CQ:at,qq=123] ping".to_string()),
+            user_id: Some(42),
+            self_id: Some(123),
+            group_id: Some(100),
+        };
+
+        assert_eq!(qq_reply(&config, &event), Some("[CQ:at,qq=42]".to_string()));
+    }
+
+    #[test]
+    fn ignores_messages_that_mention_others() {
+        let config = test_state().github.as_ref().clone();
+        let event = QqEvent {
+            post_type: Some("message".to_string()),
+            notice_type: None,
+            message: Some("[CQ:at,qq=999] ping".to_string()),
+            user_id: Some(42),
+            self_id: Some(123),
+            group_id: Some(100),
+        };
+
+        assert_eq!(qq_reply(&config, &event), None);
     }
 }
