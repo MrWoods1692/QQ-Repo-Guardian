@@ -16,6 +16,7 @@ QQ Repo Guardian 会在 `cargo run` 时自动调用 `./qsign/start.sh` 启动 qs
 - `qsign/txlib/8.9.76/dtconfig.json`
 
 启动参数 `--basePath` 会指向具体版本目录，也就是 `qsign/txlib/8.9.76`，不是 `qsign/txlib` 根目录。
+没有显式设置 `QRG_QSIGN_BASE_PATH` 时，`start.sh` 会自动选择最高版本的可用 `txlib`，避免 QQ 登录时使用过低协议版本。
 
 也可以用环境变量覆盖：
 

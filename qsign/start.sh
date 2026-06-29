@@ -34,7 +34,7 @@ select_base_path() {
     return 0
   fi
 
-  for candidate_path in "$BASE_PATH"/* "$ROOT_DIR"/txlib/*; do
+  for candidate_path in $(find "$BASE_PATH" "$ROOT_DIR/txlib" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -Vr); do
     if base_path_is_ready "$candidate_path"; then
       printf '%s\n' "$candidate_path"
       return 0
