@@ -21,6 +21,8 @@ use proc_qq::re_exports::ricq_core::msg::MessageChain;
 use proc_qq::re_exports::ricq_core::msg::elem::Text;
 #[cfg(feature = "proc-qq")]
 use proc_qq::{Authentication, ClientBuilder, DeviceSource, FileSessionStore, ShowQR, run_client};
+#[cfg(feature = "proc-qq")]
+use serde::Deserialize;
 
 use crate::config::{BotConfig, NotifyTarget};
 
@@ -87,6 +89,24 @@ mod proc_qq_client {
 
     pub struct ProcQqClient {
         client: Arc<proc_qq::Client>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct QSignInfoResponse {
+        data: Option<QSignInfo>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct QSignInfo {
+        version: Option<String>,
+        protocol: Option<QSignProtocol>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct QSignProtocol {
+        qua: Option<String>,
+        version: Option<String>,
+        code: Option<String>,
     }
 
     struct TimedConnectionHandler {
@@ -244,6 +264,7 @@ mod proc_qq_client {
                 )
                     .await
                     .with_context(|| format!("qsign service is not reachable at {qsign_endpoint}"))?;
+                log_qsign_info(&qsign_endpoint).await;
                 let diagnostic_qsign_endpoint = qsign_endpoint.clone();
                 let qsign = QSignClient::new(
                     qsign_endpoint,
@@ -383,6 +404,42 @@ mod proc_qq_client {
             .with_context(|| format!("timed out connecting to qsign service at {address}"))?
             .with_context(|| format!("could not connect to qsign service at {endpoint}"))?;
         Ok(())
+    }
+
+    async fn log_qsign_info(endpoint: &str) {
+        match fetch_qsign_info(endpoint).await {
+            Ok(Some(info)) => {
+                let protocol = info.protocol;
+                tracing::info!(
+                    qsign_endpoint = %endpoint,
+                    qsign_version = info.version.as_deref().unwrap_or("unknown"),
+                    protocol_qua = protocol.as_ref().and_then(|value| value.qua.as_deref()).unwrap_or("unknown"),
+                    protocol_version = protocol.as_ref().and_then(|value| value.version.as_deref()).unwrap_or("unknown"),
+                    protocol_code = protocol.as_ref().and_then(|value| value.code.as_deref()).unwrap_or("unknown"),
+                    "qsign service info"
+                );
+            }
+            Ok(None) => {
+                tracing::warn!(qsign_endpoint = %endpoint, "qsign service info response did not include data")
+            }
+            Err(error) => {
+                tracing::warn!(qsign_endpoint = %endpoint, ?error, "failed to fetch qsign service info")
+            }
+        }
+    }
+
+    async fn fetch_qsign_info(endpoint: &str) -> anyhow::Result<Option<QSignInfo>> {
+        let body = reqwest::Client::builder()
+            .timeout(Duration::from_secs(3))
+            .build()?
+            .get(endpoint)
+            .send()
+            .await?
+            .error_for_status()?
+            .text()
+            .await?;
+        let response = serde_json::from_str::<QSignInfoResponse>(&body)?;
+        Ok(response.data)
     }
 
     #[async_trait]
