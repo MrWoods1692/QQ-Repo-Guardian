@@ -3,11 +3,12 @@ use std::sync::Arc;
 use crate::{
     bot::BotClient,
     config::{GithubConfig, NotifyTarget},
-    github::Notification,
+    github::{self, Notification},
 };
 
 pub struct Notifier {
     bot: Arc<dyn BotClient>,
+    public_base_url: Option<Arc<str>>,
 }
 
 #[cfg(test)]
@@ -16,7 +17,7 @@ mod tests {
     use crate::{
         bot::MockBot,
         config::{FeatureConfig, RepositoryConfig, SimpleRepositoryConfig},
-        github::Feature,
+        github::{ChangeCard, ChangeCommit, Feature},
     };
 
     fn config_for(repository: RepositoryConfig) -> GithubConfig {
@@ -46,6 +47,7 @@ mod tests {
                     repository: "octo/repo".to_string(),
                     feature: Feature::Issues,
                     message: "hello".to_string(),
+                    card: None,
                 },
             )
             .await
@@ -77,6 +79,7 @@ mod tests {
                     repository: "octo/repo".to_string(),
                     feature: Feature::Issues,
                     message: "hello".to_string(),
+                    card: None,
                 },
             )
             .await
@@ -85,11 +88,68 @@ mod tests {
         assert_eq!(sent, 0);
         assert!(bot.messages().is_empty());
     }
+
+    #[tokio::test]
+    async fn dispatch_renders_change_card_image_when_available() {
+        let bot = Arc::new(MockBot::default());
+        let notifier =
+            Notifier::with_public_base_url(bot.clone(), "http://127.0.0.1:8080/".to_string());
+        let config = config_for(RepositoryConfig::from(SimpleRepositoryConfig {
+            github: "octo".to_string(),
+            repo: "repo".to_string(),
+            groups: vec![100],
+            privates: vec![],
+        }));
+
+        notifier
+            .dispatch(
+                &config,
+                Notification {
+                    repository: "octo/repo".to_string(),
+                    feature: Feature::Pushes,
+                    message: "fallback".to_string(),
+                    card: Some(ChangeCard {
+                        title: "新的代码提交".to_string(),
+                        repository: "octo/repo".to_string(),
+                        branch: "main".to_string(),
+                        actor: "alice".to_string(),
+                        summary: "2 commits pushed".to_string(),
+                        url: "https://github.com/octo/repo/compare/a...b".to_string(),
+                        commits: vec![ChangeCommit {
+                            message: "fix card".to_string(),
+                            author: "alice".to_string(),
+                            url: "https://github.com/octo/repo/commit/b".to_string(),
+                        }],
+                    }),
+                },
+            )
+            .await
+            .unwrap();
+
+        let messages = bot.messages();
+        assert_eq!(messages.len(), 1);
+        assert!(
+            messages[0]
+                .1
+                .starts_with("[CQ:image,file=http://127.0.0.1:8080/github/change.svg?")
+        );
+        assert!(messages[0].1.contains("fallback"));
+    }
 }
 
 impl Notifier {
     pub fn new(bot: Arc<dyn BotClient>) -> Self {
-        Self { bot }
+        Self {
+            bot,
+            public_base_url: None,
+        }
+    }
+
+    pub fn with_public_base_url(bot: Arc<dyn BotClient>, public_base_url: String) -> Self {
+        Self {
+            bot,
+            public_base_url: Some(public_base_url.into()),
+        }
     }
 
     pub async fn dispatch(
@@ -114,8 +174,9 @@ impl Notifier {
             return Ok(0);
         }
 
+        let message = self.render_message(&notification);
         for target in &repository.targets {
-            self.send_direct(target, &notification.message).await?;
+            self.send_direct(target, &message).await?;
         }
 
         Ok(repository.targets.len())
@@ -123,5 +184,18 @@ impl Notifier {
 
     pub async fn send_direct(&self, target: &NotifyTarget, message: &str) -> anyhow::Result<()> {
         self.bot.send(target, message).await
+    }
+
+    fn render_message(&self, notification: &Notification) -> String {
+        if let (Some(base_url), Some(card)) = (&self.public_base_url, &notification.card) {
+            return format!(
+                "[CQ:image,file={}/github/change.svg?{}]\n{}",
+                base_url.trim_end_matches('/'),
+                github::change_card_query(card),
+                notification.message
+            );
+        }
+
+        notification.message.clone()
     }
 }

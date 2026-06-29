@@ -5,7 +5,7 @@ use tokio::sync::Mutex;
 
 use crate::{
     config::GithubConfig,
-    github::{Feature, Notification},
+    github::{ChangeCard, ChangeCommit, Feature, Notification},
     notifier::Notifier,
 };
 
@@ -69,6 +69,19 @@ impl GithubPagePoller {
                             "仓库网页检测到新提交\n仓库: {}\n提交: {}\n作者: {}\n{}",
                             repository.full_name, entry.title, entry.author, entry.link
                         ),
+                        card: Some(ChangeCard {
+                            title: "仓库网页检测到新提交".to_string(),
+                            repository: repository.full_name.clone(),
+                            branch: "default".to_string(),
+                            actor: entry.author.clone(),
+                            summary: "1 latest commit".to_string(),
+                            url: entry.link.clone(),
+                            commits: vec![ChangeCommit {
+                                message: entry.title.clone(),
+                                author: entry.author.clone(),
+                                url: entry.link.clone(),
+                            }],
+                        }),
                     },
                 )
                 .await?;

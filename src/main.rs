@@ -27,15 +27,15 @@ async fn main() -> anyhow::Result<()> {
     let address: SocketAddr = config.server.bind.parse().context("invalid server.bind")?;
     let bot = bot::from_config(&config.bot).context("failed to initialize bot client")?;
     let github = Arc::new(config.github);
-    let notifier = Arc::new(Notifier::new(bot));
-    if config.poller.enabled {
-        let poller = Arc::new(GithubPagePoller::new(github.clone(), notifier.clone())?);
-        tokio::spawn(poller.run(Duration::from_secs(config.poller.interval_secs.max(30))));
-    }
     let public_base_url = std::env::var("QRG_SERVER_URL")
         .ok()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| format!("http://{}", address));
+    let notifier = Arc::new(Notifier::with_public_base_url(bot, public_base_url.clone()));
+    if config.poller.enabled {
+        let poller = Arc::new(GithubPagePoller::new(github.clone(), notifier.clone())?);
+        tokio::spawn(poller.run(Duration::from_secs(config.poller.interval_secs.max(30))));
+    }
     let state = http::AppState::new(github, notifier, public_base_url);
 
     tracing::info!(%address, "starting qq-repo-guardian");

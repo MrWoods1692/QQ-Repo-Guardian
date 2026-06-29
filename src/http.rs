@@ -47,6 +47,7 @@ pub fn router(state: AppState) -> Router {
         .route("/qq/event", post(qq_event))
         .route("/github/card", get(github_card))
         .route("/github/card.svg", get(github_card_svg))
+        .route("/github/change.svg", get(github_change_svg))
         .with_state(state)
 }
 
@@ -170,6 +171,21 @@ async fn github_card_svg(Query(query): Query<CardQuery>) -> impl IntoResponse {
         )
             .into_response(),
     }
+}
+
+async fn github_change_svg(
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let encoded = url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(query.iter())
+        .finish();
+    let card = github::change_card_from_query(&encoded);
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "image/svg+xml; charset=utf-8")],
+        github::render_change_card_svg(&card),
+    )
+        .into_response()
 }
 
 fn qq_reply(config: &GithubConfig, event: &QqEvent, public_base_url: &str) -> Option<String> {

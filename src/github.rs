@@ -8,6 +8,25 @@ pub struct Notification {
     pub repository: String,
     pub feature: Feature,
     pub message: String,
+    pub card: Option<ChangeCard>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangeCard {
+    pub title: String,
+    pub repository: String,
+    pub branch: String,
+    pub actor: String,
+    pub summary: String,
+    pub url: String,
+    pub commits: Vec<ChangeCommit>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangeCommit {
+    pub message: String,
+    pub author: String,
+    pub url: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -262,6 +281,133 @@ pub fn render_repo_card_svg(card: &RepositoryCard) -> String {
     )
 }
 
+pub fn render_change_card_svg(card: &ChangeCard) -> String {
+    let commit_rows = render_change_commit_rows(&card.commits);
+    format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="820" height="460" viewBox="0 0 820 460">
+  <defs>
+    <linearGradient id="changeBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0891b2"/>
+      <stop offset="0.52" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="changePanel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.98"/>
+      <stop offset="1" stop-color="#f8fafc" stop-opacity="0.94"/>
+    </linearGradient>
+    <filter id="changeShadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#0f172a" flood-opacity="0.26"/>
+    </filter>
+  </defs>
+  <rect width="820" height="460" rx="28" fill="url(#changeBg)"/>
+  <path d="M70 96 C142 26 260 24 342 82 C436 150 520 110 606 56 C668 17 744 35 792 94 L792 0 L0 0 L0 154 C20 137 42 117 70 96Z" fill="#ffffff" opacity="0.14"/>
+  <circle cx="706" cy="356" r="118" fill="#fef3c7" opacity="0.18"/>
+  <rect x="38" y="38" width="744" height="384" rx="22" fill="url(#changePanel)" filter="url(#changeShadow)"/>
+  <rect x="64" y="66" width="132" height="38" rx="19" fill="#dbeafe"/>
+  <text x="84" y="91" fill="#1d4ed8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="800">Repo Change</text>
+  <text x="64" y="146" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="35" font-weight="850">{}</text>
+  <text x="64" y="181" fill="#475569" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="20" font-weight="650">{}</text>
+  <rect x="64" y="216" width="168" height="68" rx="16" fill="#eff6ff"/>
+  <rect x="248" y="216" width="168" height="68" rx="16" fill="#f0fdf4"/>
+  <rect x="432" y="216" width="286" height="68" rx="16" fill="#fdf2f8"/>
+  <text x="86" y="245" fill="#1d4ed8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="750">Branch</text>
+  <text x="86" y="269" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="850">{}</text>
+  <text x="270" y="245" fill="#15803d" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="750">Actor</text>
+  <text x="270" y="269" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="850">{}</text>
+  <text x="454" y="245" fill="#be185d" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="750">Summary</text>
+  <text x="454" y="269" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="21" font-weight="850">{}</text>
+  <text x="64" y="326" fill="#334155" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="20" font-weight="750">Recent commits</text>
+  {}
+  <text x="64" y="398" fill="#2563eb" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17">{}</text>
+</svg>"##,
+        escape_html(&truncate_for_card(&card.title, 42)),
+        escape_html(&truncate_for_card(&card.repository, 56)),
+        escape_html(&truncate_for_card(&card.branch, 18)),
+        escape_html(&truncate_for_card(&card.actor, 18)),
+        escape_html(&truncate_for_card(&card.summary, 30)),
+        commit_rows,
+        escape_html(&truncate_for_card(&card.url, 78)),
+    )
+}
+
+pub fn change_card_query(card: &ChangeCard) -> String {
+    let commits = card
+        .commits
+        .iter()
+        .take(3)
+        .map(|commit| format!("{} — {}", commit.message, commit.author))
+        .collect::<Vec<_>>()
+        .join("\n");
+    url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("title", &card.title)
+        .append_pair("repository", &card.repository)
+        .append_pair("branch", &card.branch)
+        .append_pair("actor", &card.actor)
+        .append_pair("summary", &card.summary)
+        .append_pair("url", &card.url)
+        .append_pair("commits", &commits)
+        .finish()
+}
+
+pub fn change_card_from_query(query: &str) -> ChangeCard {
+    let pairs = url::form_urlencoded::parse(query.as_bytes())
+        .into_owned()
+        .collect::<std::collections::HashMap<_, _>>();
+    let commits = pairs
+        .get("commits")
+        .map(|value| {
+            value
+                .lines()
+                .take(3)
+                .map(|line| ChangeCommit {
+                    message: line.to_string(),
+                    author: String::new(),
+                    url: String::new(),
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    ChangeCard {
+        title: pairs.get("title").cloned().unwrap_or_default(),
+        repository: pairs.get("repository").cloned().unwrap_or_default(),
+        branch: pairs.get("branch").cloned().unwrap_or_default(),
+        actor: pairs.get("actor").cloned().unwrap_or_default(),
+        summary: pairs.get("summary").cloned().unwrap_or_default(),
+        url: pairs.get("url").cloned().unwrap_or_default(),
+        commits,
+    }
+}
+
+fn render_change_commit_rows(commits: &[ChangeCommit]) -> String {
+    if commits.is_empty() {
+        return r##"<text x="64" y="356" fill="#64748b" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18">No commit detail available.</text>"##.to_string();
+    }
+
+    commits
+        .iter()
+        .take(3)
+        .enumerate()
+        .map(|(index, commit)| {
+            let y = 356 + index * 25;
+            let author = if commit.author.is_empty() {
+                String::new()
+            } else {
+                format!(" · {}", commit.author)
+            };
+            format!(
+                r##"<text x="64" y="{}" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="650">{}</text>"##,
+                y,
+                escape_html(&truncate_for_card(
+                    &format!("{}{}", commit.message, author),
+                    76,
+                ))
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n  ")
+}
+
 fn format_count(count: u64) -> String {
     if count >= 1_000_000 {
         format!("{:.1}M", count as f64 / 1_000_000.0)
@@ -322,6 +468,7 @@ fn issue_notification(value: &Value, repository: &Repository, actor: &str) -> No
         repository: repository.full_name.clone(),
         feature: Feature::Issues,
         message,
+        card: None,
     }
 }
 
@@ -348,6 +495,7 @@ fn pull_request_notification(value: &Value, repository: &Repository, actor: &str
         repository: repository.full_name.clone(),
         feature: Feature::PullRequests,
         message,
+        card: None,
     }
 }
 
@@ -363,6 +511,30 @@ fn push_notification(
         .trim_start_matches("refs/heads/");
     let count = value["commits"].as_array().map_or(0, Vec::len);
     let compare = value["compare"].as_str().unwrap_or(repo_url);
+    let commits = value["commits"]
+        .as_array()
+        .map(|commits| {
+            commits
+                .iter()
+                .take(3)
+                .map(|commit| ChangeCommit {
+                    message: commit["message"]
+                        .as_str()
+                        .unwrap_or("unknown commit")
+                        .lines()
+                        .next()
+                        .unwrap_or("unknown commit")
+                        .to_string(),
+                    author: commit["author"]["name"]
+                        .as_str()
+                        .or_else(|| commit["author"]["username"].as_str())
+                        .unwrap_or(actor)
+                        .to_string(),
+                    url: commit["url"].as_str().unwrap_or(compare).to_string(),
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     let message = format!(
         "新的代码提交\n仓库: {}\n分支: {}\n提交数: {}\n提交者: {}\n{}",
         repository.full_name, branch, count, actor, compare
@@ -371,6 +543,15 @@ fn push_notification(
         repository: repository.full_name.clone(),
         feature: Feature::Pushes,
         message,
+        card: Some(ChangeCard {
+            title: "新的代码提交".to_string(),
+            repository: repository.full_name.clone(),
+            branch: branch.to_string(),
+            actor: actor.to_string(),
+            summary: format!("{} commits pushed", count),
+            url: compare.to_string(),
+            commits,
+        }),
     }
 }
 
@@ -393,6 +574,7 @@ fn check_notification(value: &Value, repository: &Repository) -> Notification {
         repository: repository.full_name.clone(),
         feature: Feature::Checks,
         message,
+        card: None,
     }
 }
 
@@ -414,6 +596,7 @@ fn member_notification(value: &Value, repository: &Repository) -> Notification {
         repository: repository.full_name.clone(),
         feature: Feature::Contributors,
         message,
+        card: None,
     }
 }
 
@@ -433,6 +616,7 @@ fn release_notification(value: &Value, repository: &Repository, actor: &str) -> 
         repository: repository.full_name.clone(),
         feature: Feature::Releases,
         message,
+        card: None,
     }
 }
 
@@ -459,6 +643,7 @@ fn star_notification(
         repository: repository.full_name.clone(),
         feature: Feature::Stars,
         message,
+        card: None,
     }
 }
 
@@ -472,6 +657,7 @@ fn fork_notification(value: &Value, repository: &Repository, actor: &str) -> Not
             "Fork 数量增加\n仓库: {}\n当前 Fork: {}\n来自: {}\n{}",
             repository.full_name, count, actor, fork_url
         ),
+        card: None,
     }
 }
 
