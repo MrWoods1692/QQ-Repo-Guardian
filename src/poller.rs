@@ -4,7 +4,7 @@ use anyhow::Context;
 use tokio::sync::Mutex;
 
 use crate::{
-    config::GithubConfig,
+    config::{GithubConfig, PollerConfig},
     github::{ChangeCard, ChangeCommit, Feature, Notification},
     notifier::Notifier,
 };
@@ -17,12 +17,17 @@ pub struct GithubPagePoller {
 }
 
 impl GithubPagePoller {
-    pub fn new(github: Arc<GithubConfig>, notifier: Arc<Notifier>) -> anyhow::Result<Self> {
+    pub fn new(
+        github: Arc<GithubConfig>,
+        notifier: Arc<Notifier>,
+        config: &PollerConfig,
+    ) -> anyhow::Result<Self> {
         Ok(Self {
             github,
             notifier,
             client: reqwest::Client::builder()
                 .user_agent("qq-repo-guardian")
+                .timeout(Duration::from_secs(config.timeout_secs.max(3)))
                 .build()?,
             seen_entries: Mutex::new(HashMap::new()),
         })

@@ -82,7 +82,16 @@ privates = [123456789]
 
 继续添加仓库时，再复制一组 `[[repositories]]`。`groups` 和 `privates` 都支持多个 QQ 号；没有对应接收方时填空数组 `[]`。
 
-程序默认每 300 秒解析一次 `https://github.com/<GitHub名称>/<仓库名称>/commits.atom`，检测到新提交后发送 Push 类通知。首次启动会先记录当前最新提交，不会把历史提交刷屏。如果日志里出现 `GitHub page poll failed` 且包含 `Connection timed out`，说明当前机器访问 GitHub 超时，程序会等待下一轮继续重试。
+程序默认每 300 秒解析一次 `https://github.com/<GitHub名称>/<仓库名称>/commits.atom`，检测到新提交后发送 Push 类通知。首次启动会先记录当前最新提交，不会把历史提交刷屏。可以用 `[poller]` 调整轮询速度和 GitHub 请求超时：
+
+```toml
+[poller]
+enabled = true
+interval_secs = 60
+timeout_secs = 10
+```
+
+`interval_secs` 最小按 30 秒执行；`timeout_secs` 默认 15 秒，最小按 3 秒执行。如果日志里出现 `GitHub page poll failed` 且包含 `Connection timed out`，说明当前机器访问 GitHub 超时，程序会等待下一轮继续重试。
 
 ## 可选 GitHub Webhook
 

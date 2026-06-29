@@ -33,7 +33,11 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|| format!("http://{}", address));
     let notifier = Arc::new(Notifier::with_public_base_url(bot, public_base_url.clone()));
     if config.poller.enabled {
-        let poller = Arc::new(GithubPagePoller::new(github.clone(), notifier.clone())?);
+        let poller = Arc::new(GithubPagePoller::new(
+            github.clone(),
+            notifier.clone(),
+            &config.poller,
+        )?);
         tokio::spawn(poller.run(Duration::from_secs(config.poller.interval_secs.max(30))));
     }
     let state = http::AppState::new(github, notifier, public_base_url);
