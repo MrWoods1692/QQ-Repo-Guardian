@@ -1,0 +1,46 @@
+[server]
+bind = "127.0.0.1:8080"
+
+[bot]
+type = "mock"
+
+[github]
+webhook_secret = "change-me"
+admins = [123456789]
+
+[github.default_features]
+issues = true
+pull_requests = true
+pushes = true
+checks = true
+contributors = true
+releases = true
+stars = true
+forks = true
+
+[[github.repositories]]
+full_name = "owner/repo"
+
+[github.repositories.features]
+issues = true
+pull_requests = true
+pushes = true
+checks = true
+contributors = true
+releases = true
+stars = true
+forks = true
+
+[[github.repositories.targets]]
+type = "group"
+id = 10000
+
+[[github.repositories.targets]]
+type = "private"
+id = 123456789
+
+# 生产环境接入 OneBot HTTP API 时改成：
+# [bot]
+# type = "one_bot"
+# endpoint = "http://127.0.0.1:3000"
+# access_token = "optional-token"
