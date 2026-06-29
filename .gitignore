@@ -4,7 +4,12 @@ device.json
 session.token
 qrcode.png
 /qsign/*.jar
+/qsign/*.zip
 /qsign/*.tmp.*
+/qsign/.runtime/
+/qsign/bin/
+/qsign/lib/
 /qsign/source.env
 /qsign/txlib/
+/unidbg-fetch-qsign-*.zip
 /qsign/logs/

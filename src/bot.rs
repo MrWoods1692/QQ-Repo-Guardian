@@ -1,8 +1,8 @@
-use std::sync::{Arc, Mutex};
 #[cfg(feature = "proc-qq")]
 use std::net::{Ipv4Addr, SocketAddr};
 #[cfg(feature = "proc-qq")]
 use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 #[cfg(feature = "proc-qq")]
 use std::task::{Context as TaskContext, Poll};
 #[cfg(feature = "proc-qq")]
@@ -21,8 +21,6 @@ use proc_qq::re_exports::ricq_core::msg::MessageChain;
 use proc_qq::re_exports::ricq_core::msg::elem::Text;
 #[cfg(feature = "proc-qq")]
 use proc_qq::{Authentication, ClientBuilder, DeviceSource, FileSessionStore, ShowQR, run_client};
-use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
-use serde::Serialize;
 
 use crate::config::{BotConfig, NotifyTarget};
 
@@ -33,14 +31,6 @@ pub trait BotClient: Send + Sync {
 
 pub fn from_config(config: &BotConfig) -> anyhow::Result<Arc<dyn BotClient>> {
     match config {
-        BotConfig::Mock => Ok(Arc::new(MockBot::default())),
-        BotConfig::OneBot {
-            endpoint,
-            access_token,
-        } => Ok(Arc::new(OneBotClient::new(
-            endpoint,
-            access_token.as_deref(),
-        )?)),
         BotConfig::ProcQq {
             device_path,
             session_path,
@@ -81,73 +71,6 @@ impl BotClient for MockBot {
             .expect("mock bot mutex poisoned")
             .push((target.clone(), message.to_string()));
         tracing::info!(?target, %message, "mock bot message");
-        Ok(())
-    }
-}
-
-pub struct OneBotClient {
-    endpoint: String,
-    client: reqwest::Client,
-}
-
-impl OneBotClient {
-    pub fn new(endpoint: &str, access_token: Option<&str>) -> anyhow::Result<Self> {
-        let mut headers = HeaderMap::new();
-        if let Some(token) = access_token {
-            headers.insert(
-                AUTHORIZATION,
-                HeaderValue::from_str(&format!("Bearer {token}"))?,
-            );
-        }
-
-        Ok(Self {
-            endpoint: endpoint.trim_end_matches('/').to_string(),
-            client: reqwest::Client::builder()
-                .default_headers(headers)
-                .build()?,
-        })
-    }
-}
-
-#[derive(Serialize)]
-struct GroupMessage<'a> {
-    group_id: i64,
-    message: &'a str,
-}
-
-#[derive(Serialize)]
-struct PrivateMessage<'a> {
-    user_id: i64,
-    message: &'a str,
-}
-
-#[async_trait]
-impl BotClient for OneBotClient {
-    async fn send(&self, target: &NotifyTarget, message: &str) -> anyhow::Result<()> {
-        match target {
-            NotifyTarget::Group { id } => {
-                self.client
-                    .post(format!("{}/send_group_msg", self.endpoint))
-                    .json(&GroupMessage {
-                        group_id: *id,
-                        message,
-                    })
-                    .send()
-                    .await?
-                    .error_for_status()?;
-            }
-            NotifyTarget::Private { id } => {
-                self.client
-                    .post(format!("{}/send_private_msg", self.endpoint))
-                    .json(&PrivateMessage {
-                        user_id: *id,
-                        message,
-                    })
-                    .send()
-                    .await?
-                    .error_for_status()?;
-            }
-        }
         Ok(())
     }
 }
@@ -220,7 +143,12 @@ mod proc_qq_client {
             );
             let stream = connect_fastest(addresses, self.timeout)
                 .await
-                .with_context(|| format!("failed to connect to any QQ login server within {} seconds", self.timeout.as_secs()))?;
+                .with_context(|| {
+                    format!(
+                        "failed to connect to any QQ login server within {} seconds",
+                        self.timeout.as_secs()
+                    )
+                })?;
             Ok(Box::new(TimedConnection(stream)))
         }
     }
@@ -278,7 +206,10 @@ mod proc_qq_client {
         }
 
         Err(last_error.unwrap_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::NotConnected, "no QQ login server connected")
+            std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "no QQ login server connected",
+            )
         }))
     }
 
@@ -306,7 +237,11 @@ mod proc_qq_client {
                     session_path = %session_path,
                     "starting proc_qq client"
                 );
-                ensure_qsign_ready(&qsign_endpoint, qsign_command.as_deref())
+                ensure_qsign_ready(
+                    &qsign_endpoint,
+                    qsign_command.as_deref(),
+                    Duration::from_secs(qsign_timeout_secs),
+                )
                     .await
                     .with_context(|| format!("qsign service is not reachable at {qsign_endpoint}"))?;
                 let diagnostic_qsign_endpoint = qsign_endpoint.clone();
@@ -380,10 +315,19 @@ mod proc_qq_client {
         std::env::var("QRG_QSIGN_COMMAND")
             .ok()
             .filter(|value| !value.trim().is_empty())
-            .or_else(|| configured.map(str::trim).filter(|value| !value.is_empty()).map(str::to_string))
+            .or_else(|| {
+                configured
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
     }
 
-    async fn ensure_qsign_ready(endpoint: &str, command: Option<&str>) -> anyhow::Result<()> {
+    async fn ensure_qsign_ready(
+        endpoint: &str,
+        command: Option<&str>,
+        startup_timeout: Duration,
+    ) -> anyhow::Result<()> {
         if ensure_qsign_reachable(endpoint).await.is_ok() {
             return Ok(());
         }
@@ -401,7 +345,7 @@ mod proc_qq_client {
             .spawn()
             .context("failed to start qsign command")?;
 
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        let deadline = tokio::time::Instant::now() + startup_timeout;
         loop {
             if ensure_qsign_reachable(endpoint).await.is_ok() {
                 tracing::info!(qsign_endpoint = %endpoint, "qsign service is reachable");
@@ -414,7 +358,12 @@ mod proc_qq_client {
                 anyhow::bail!("qsign command exited before {endpoint} became reachable: {status}");
             }
             if tokio::time::Instant::now() >= deadline {
-                anyhow::bail!("qsign command started, but {endpoint} did not become reachable within 15 seconds");
+                let _ = child.kill();
+                let _ = child.wait();
+                anyhow::bail!(
+                    "qsign command started, but {endpoint} did not become reachable within {} seconds",
+                    startup_timeout.as_secs()
+                );
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
@@ -469,7 +418,7 @@ mod proc_qq_client {
         _qsign_timeout_secs: u64,
     ) -> anyhow::Result<Arc<dyn BotClient>> {
         anyhow::bail!(
-            "bot.type = proc_qq requires nightly Rust and the `proc-qq` feature; run `RUSTUP_HOME=\"$HOME/.local/share/qrg-rustup\" CARGO_HOME=\"$HOME/.cargo\" cargo +nightly run --features proc-qq -- --config config.toml`, or change config.toml to `type = \"mock\"`/`type = \"one_bot\"` for regular `cargo run`"
+            "bot.type = proc_qq requires the `proc-qq` feature; run `cargo run` with default features enabled"
         )
     }
 }

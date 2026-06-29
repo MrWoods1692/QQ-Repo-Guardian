@@ -209,7 +209,7 @@ mod tests {
     use super::*;
     use crate::{
         bot::MockBot,
-        config::{FeatureConfig, RepositoryConfig},
+        config::{FeatureConfig, RepositoryConfig, SimpleRepositoryConfig},
     };
     use axum::{
         body::Body,
@@ -222,11 +222,12 @@ mod tests {
             webhook_secret: None,
             default_features: FeatureConfig::default(),
             admins: [42].into_iter().collect(),
-            repositories: vec![RepositoryConfig {
-                full_name: "octo/repo".to_string(),
-                features: FeatureConfig::default(),
-                targets: vec![NotifyTarget::Group { id: 100 }],
-            }],
+            repositories: vec![RepositoryConfig::from(SimpleRepositoryConfig {
+                github: "octo".to_string(),
+                repo: "repo".to_string(),
+                groups: vec![100],
+                privates: vec![],
+            })],
         };
         AppState::new(
             Arc::new(github),

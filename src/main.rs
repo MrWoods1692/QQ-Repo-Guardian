@@ -1,8 +1,10 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Context;
 use clap::Parser;
-use qq_repo_guardian::{bot, config::AppConfig, http, notifier::Notifier};
+use qq_repo_guardian::{
+    bot, config::AppConfig, http, notifier::Notifier, poller::GithubPagePoller,
+};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Debug, Parser)]
@@ -24,7 +26,13 @@ async fn main() -> anyhow::Result<()> {
         AppConfig::load(&args.config).with_context(|| format!("failed to load {}", args.config))?;
     let address: SocketAddr = config.server.bind.parse().context("invalid server.bind")?;
     let bot = bot::from_config(&config.bot).context("failed to initialize bot client")?;
-    let state = http::AppState::new(Arc::new(config.github), Arc::new(Notifier::new(bot)));
+    let github = Arc::new(config.github);
+    let notifier = Arc::new(Notifier::new(bot));
+    if config.poller.enabled {
+        let poller = Arc::new(GithubPagePoller::new(github.clone(), notifier.clone())?);
+        tokio::spawn(poller.run(Duration::from_secs(config.poller.interval_secs.max(30))));
+    }
+    let state = http::AppState::new(github, notifier);
 
     tracing::info!(%address, "starting qq-repo-guardian");
     http::serve(address, state).await

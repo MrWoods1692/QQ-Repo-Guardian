@@ -2,19 +2,77 @@ use std::{collections::HashSet, fs, path::Path};
 
 use serde::Deserialize;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AppConfig {
-    #[serde(default)]
     pub server: ServerConfig,
     pub bot: BotConfig,
     pub github: GithubConfig,
+    pub poller: PollerConfig,
 }
 
 impl AppConfig {
     pub fn load(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let content = fs::read_to_string(path)?;
-        Ok(toml::from_str(&content)?)
+        let config: RawAppConfig = toml::from_str(&content)?;
+        Ok(config.into())
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RawAppConfig {
+    #[serde(default)]
+    admins: HashSet<i64>,
+    #[serde(default)]
+    repositories: Vec<SimpleRepositoryConfig>,
+    #[serde(default)]
+    server: ServerConfig,
+    #[serde(default)]
+    bot: BotConfig,
+    #[serde(default)]
+    poller: PollerConfig,
+    #[serde(default)]
+    github: RawGithubConfig,
+}
+
+impl From<RawAppConfig> for AppConfig {
+    fn from(config: RawAppConfig) -> Self {
+        let repositories = if config.repositories.is_empty() {
+            config.github.repositories
+        } else {
+            config
+                .repositories
+                .into_iter()
+                .map(RepositoryConfig::from)
+                .collect()
+        };
+
+        Self {
+            server: config.server,
+            bot: config.bot,
+            poller: config.poller,
+            github: GithubConfig {
+                webhook_secret: config.github.webhook_secret,
+                default_features: config.github.default_features,
+                repositories,
+                admins: if config.admins.is_empty() {
+                    config.github.admins
+                } else {
+                    config.admins
+                },
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct RawGithubConfig {
+    pub webhook_secret: Option<String>,
+    #[serde(default)]
+    pub default_features: FeatureConfig,
+    #[serde(default)]
+    pub repositories: Vec<RepositoryConfig>,
+    #[serde(default)]
+    pub admins: HashSet<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -38,11 +96,6 @@ fn default_bind() -> String {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum BotConfig {
-    Mock,
-    OneBot {
-        endpoint: String,
-        access_token: Option<String>,
-    },
     ProcQq {
         #[serde(default = "default_device_path")]
         device_path: String,
@@ -57,6 +110,19 @@ pub enum BotConfig {
         #[serde(default = "default_qsign_timeout_secs")]
         qsign_timeout_secs: u64,
     },
+}
+
+impl Default for BotConfig {
+    fn default() -> Self {
+        Self::ProcQq {
+            device_path: default_device_path(),
+            session_path: default_session_path(),
+            qsign_endpoint: default_qsign_endpoint(),
+            qsign_key: default_qsign_key(),
+            qsign_command: Some("./qsign/start.sh".to_string()),
+            qsign_timeout_secs: default_qsign_timeout_secs(),
+        }
+    }
 }
 
 fn default_device_path() -> String {
@@ -76,7 +142,7 @@ fn default_qsign_key() -> String {
 }
 
 fn default_qsign_timeout_secs() -> u64 {
-    60
+    900
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -91,12 +157,67 @@ pub struct GithubConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct PollerConfig {
+    #[serde(default = "enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_poll_interval_secs")]
+    pub interval_secs: u64,
+}
+
+impl Default for PollerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval_secs: default_poll_interval_secs(),
+        }
+    }
+}
+
+fn default_poll_interval_secs() -> u64 {
+    300
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SimpleRepositoryConfig {
+    pub github: String,
+    pub repo: String,
+    #[serde(default)]
+    pub groups: Vec<i64>,
+    #[serde(default)]
+    pub privates: Vec<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct RepositoryConfig {
     pub full_name: String,
     #[serde(default)]
     pub features: FeatureConfig,
     #[serde(default)]
     pub targets: Vec<NotifyTarget>,
+}
+
+impl From<SimpleRepositoryConfig> for RepositoryConfig {
+    fn from(config: SimpleRepositoryConfig) -> Self {
+        let mut targets = Vec::new();
+        targets.extend(
+            config
+                .groups
+                .into_iter()
+                .map(|id| NotifyTarget::Group { id }),
+        );
+        targets.extend(
+            config
+                .privates
+                .into_iter()
+                .map(|id| NotifyTarget::Private { id }),
+        );
+
+        Self {
+            full_name: format!("{}/{}", config.github.trim(), config.repo.trim()),
+            features: FeatureConfig::default(),
+            targets,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -143,4 +264,37 @@ impl Default for FeatureConfig {
 
 fn enabled() -> bool {
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_simplified_config() {
+        let config: RawAppConfig = toml::from_str(
+            r#"
+admins = [42]
+
+[[repositories]]
+github = "octo"
+repo = "repo"
+groups = [100]
+privates = [42]
+"#,
+        )
+        .unwrap();
+        let config = AppConfig::from(config);
+
+        assert!(config.github.admins.contains(&42));
+        assert_eq!(config.github.repositories[0].full_name, "octo/repo");
+        assert_eq!(
+            config.github.repositories[0].targets,
+            vec![
+                NotifyTarget::Group { id: 100 },
+                NotifyTarget::Private { id: 42 }
+            ]
+        );
+        assert!(config.poller.enabled);
+    }
 }
