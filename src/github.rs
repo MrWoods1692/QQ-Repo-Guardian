@@ -77,21 +77,225 @@ pub fn parse_event(event: &str, payload: &[u8]) -> anyhow::Result<Option<Notific
 }
 
 pub fn render_repo_card(url: &str) -> Option<String> {
+    let slug = parse_github_repository_url(url)?;
+
+    Some(format!(
+        "GitHub 仓库卡片\n仓库: {}\n链接: {}",
+        slug.full_name, slug.url
+    ))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepositorySlug {
+    pub owner: String,
+    pub repo: String,
+    pub full_name: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepositoryCard {
+    pub owner: String,
+    pub name: String,
+    pub full_name: String,
+    pub url: String,
+    pub avatar_url: String,
+    pub about: String,
+    pub stars: u64,
+    pub forks: u64,
+    pub issues: u64,
+    pub recent_commit_time: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiRepository {
+    name: String,
+    full_name: String,
+    html_url: String,
+    description: Option<String>,
+    stargazers_count: u64,
+    forks_count: u64,
+    open_issues_count: u64,
+    pushed_at: Option<String>,
+    owner: ApiOwner,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiOwner {
+    login: String,
+    avatar_url: String,
+}
+
+pub fn parse_github_repository_url(url: &str) -> Option<RepositorySlug> {
     let parsed = url::Url::parse(url).ok()?;
     if parsed.host_str()? != "github.com" {
         return None;
     }
 
     let mut segments = parsed.path_segments()?;
-    let owner = segments.next()?;
-    let repo = segments.next()?;
+    let owner = segments.next()?.trim().to_string();
+    let repo = segments.next()?.trim_end_matches(".git").to_string();
     if owner.is_empty() || repo.is_empty() {
         return None;
     }
 
-    Some(format!(
-        "GitHub 仓库卡片\n仓库: {owner}/{repo}\n链接: https://github.com/{owner}/{repo}"
-    ))
+    let full_name = format!("{owner}/{repo}");
+    Some(RepositorySlug {
+        owner,
+        repo,
+        full_name: full_name.clone(),
+        url: format!("https://github.com/{full_name}"),
+    })
+}
+
+pub async fn fetch_repo_card(url: &str) -> anyhow::Result<RepositoryCard> {
+    let slug = parse_github_repository_url(url)
+        .ok_or_else(|| anyhow::anyhow!("not a github repository url"))?;
+    let api_url = format!("https://api.github.com/repos/{}/{}", slug.owner, slug.repo);
+    let body = reqwest::Client::new()
+        .get(api_url)
+        .header(reqwest::header::USER_AGENT, "qq-repo-guardian")
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+    let repository: ApiRepository = serde_json::from_str(&body)?;
+
+    Ok(RepositoryCard {
+        owner: repository.owner.login,
+        name: repository.name,
+        full_name: repository.full_name,
+        url: repository.html_url,
+        avatar_url: repository.owner.avatar_url,
+        about: repository
+            .description
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "No description provided.".to_string()),
+        stars: repository.stargazers_count,
+        forks: repository.forks_count,
+        issues: repository.open_issues_count,
+        recent_commit_time: repository
+            .pushed_at
+            .map(format_github_time)
+            .unwrap_or_else(|| "unknown".to_string()),
+    })
+}
+
+pub fn render_repo_card_html(card: &RepositoryCard) -> String {
+    let svg = render_repo_card_svg(card);
+    format!(
+        r#"<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{}</title>
+  <style>
+    html, body {{ margin: 0; min-height: 100%; background: #eef2ff; }}
+    body {{ display: grid; place-items: center; padding: 32px; box-sizing: border-box; }}
+    img {{ width: min(760px, 100%); height: auto; display: block; filter: drop-shadow(0 22px 48px rgba(15, 23, 42, .22)); }}
+  </style>
+</head>
+<body>
+  <img alt="{}" src="data:image/svg+xml;charset=utf-8,{}">
+</body>
+</html>"#,
+        escape_html(&card.full_name),
+        escape_html(&card.full_name),
+        url::form_urlencoded::byte_serialize(svg.as_bytes()).collect::<String>()
+    )
+}
+
+pub fn render_repo_card_svg(card: &RepositoryCard) -> String {
+    let about = truncate_for_card(&card.about, 120);
+    format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="760" height="420" viewBox="0 0 760 420">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0ea5e9"/>
+      <stop offset="0.46" stop-color="#4f46e5"/>
+      <stop offset="1" stop-color="#ec4899"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.96"/>
+      <stop offset="1" stop-color="#f8fafc" stop-opacity="0.92"/>
+    </linearGradient>
+    <clipPath id="avatarClip"><circle cx="96" cy="96" r="46"/></clipPath>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#0f172a" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+  <rect width="760" height="420" rx="28" fill="url(#bg)"/>
+  <circle cx="630" cy="74" r="92" fill="#ffffff" opacity="0.13"/>
+  <circle cx="692" cy="334" r="138" fill="#fef3c7" opacity="0.18"/>
+  <rect x="36" y="36" width="688" height="348" rx="22" fill="url(#panel)" filter="url(#shadow)"/>
+  <image x="50" y="50" width="92" height="92" href="{}" preserveAspectRatio="xMidYMid slice" clip-path="url(#avatarClip)"/>
+  <circle cx="96" cy="96" r="47" fill="none" stroke="#ffffff" stroke-width="4"/>
+  <text x="164" y="78" fill="#64748b" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="21" font-weight="700">{}</text>
+  <text x="164" y="118" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="34" font-weight="800">{}</text>
+  <text x="164" y="150" fill="#2563eb" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18">{}</text>
+  <text x="54" y="214" fill="#334155" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="20" font-weight="650">About</text>
+  <text x="54" y="246" fill="#475569" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19">{}</text>
+  <rect x="54" y="286" width="146" height="64" rx="16" fill="#eff6ff"/>
+  <rect x="218" y="286" width="146" height="64" rx="16" fill="#f0fdf4"/>
+  <rect x="382" y="286" width="146" height="64" rx="16" fill="#fff7ed"/>
+  <rect x="546" y="286" width="132" height="64" rx="16" fill="#fdf2f8"/>
+  <text x="76" y="314" fill="#1d4ed8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">Stars</text>
+  <text x="76" y="340" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="25" font-weight="800">{}</text>
+  <text x="240" y="314" fill="#15803d" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">Forks</text>
+  <text x="240" y="340" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="25" font-weight="800">{}</text>
+  <text x="404" y="314" fill="#c2410c" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">Issues</text>
+  <text x="404" y="340" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="25" font-weight="800">{}</text>
+  <text x="568" y="314" fill="#be185d" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">Recent</text>
+  <text x="568" y="340" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" font-weight="800">{}</text>
+</svg>"##,
+        escape_html(&card.avatar_url),
+        escape_html(&card.owner),
+        escape_html(&card.name),
+        escape_html(&card.url),
+        escape_html(&about),
+        format_count(card.stars),
+        format_count(card.forks),
+        format_count(card.issues),
+        escape_html(&card.recent_commit_time),
+    )
+}
+
+fn format_count(count: u64) -> String {
+    if count >= 1_000_000 {
+        format!("{:.1}M", count as f64 / 1_000_000.0)
+    } else if count >= 1_000 {
+        format!("{:.1}K", count as f64 / 1_000.0)
+    } else {
+        count.to_string()
+    }
+}
+
+fn format_github_time(value: String) -> String {
+    value
+        .strip_suffix('Z')
+        .unwrap_or(&value)
+        .split_once('T')
+        .map(|(date, _)| date.to_string())
+        .unwrap_or(value)
+}
+
+fn truncate_for_card(value: &str, max_chars: usize) -> String {
+    let mut result = value.chars().take(max_chars).collect::<String>();
+    if value.chars().count() > max_chars {
+        result.push('…');
+    }
+    result
+}
+
+fn escape_html(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 fn issue_notification(value: &Value, repository: &Repository, actor: &str) -> Notification {
@@ -288,5 +492,28 @@ mod tests {
     fn renders_repo_card_from_github_url() {
         let card = render_repo_card("https://github.com/owner/project/issues/1").unwrap();
         assert!(card.contains("owner/project"));
+    }
+
+    #[test]
+    fn renders_colorful_repo_card_svg() {
+        let card = RepositoryCard {
+            owner: "owner".to_string(),
+            name: "project".to_string(),
+            full_name: "owner/project".to_string(),
+            url: "https://github.com/owner/project".to_string(),
+            avatar_url: "https://avatars.githubusercontent.com/u/1?v=4".to_string(),
+            about: "A useful project".to_string(),
+            stars: 15320,
+            forks: 821,
+            issues: 12,
+            recent_commit_time: "2026-06-29".to_string(),
+        };
+        let svg = render_repo_card_svg(&card);
+
+        assert!(svg.contains("owner"));
+        assert!(svg.contains("project"));
+        assert!(svg.contains("15.3K"));
+        assert!(svg.contains("Issues"));
+        assert!(svg.contains("A useful project"));
     }
 }

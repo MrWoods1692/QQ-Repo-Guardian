@@ -4,8 +4,8 @@ use axum::{
     Json, Router,
     body::Bytes,
     extract::{Query, State},
-    http::{HeaderMap, StatusCode},
-    response::IntoResponse,
+    http::{HeaderMap, StatusCode, header},
+    response::{Html, IntoResponse},
     routing::{get, post},
 };
 use hmac::{Hmac, Mac};
@@ -23,11 +23,20 @@ use crate::{
 pub struct AppState {
     github: Arc<GithubConfig>,
     notifier: Arc<Notifier>,
+    public_base_url: Arc<str>,
 }
 
 impl AppState {
-    pub fn new(github: Arc<GithubConfig>, notifier: Arc<Notifier>) -> Self {
-        Self { github, notifier }
+    pub fn new(
+        github: Arc<GithubConfig>,
+        notifier: Arc<Notifier>,
+        public_base_url: String,
+    ) -> Self {
+        Self {
+            github,
+            notifier,
+            public_base_url: public_base_url.into(),
+        }
     }
 }
 
@@ -37,6 +46,7 @@ pub fn router(state: AppState) -> Router {
         .route("/github/webhook", post(github_webhook))
         .route("/qq/event", post(qq_event))
         .route("/github/card", get(github_card))
+        .route("/github/card.svg", get(github_card_svg))
         .with_state(state)
 }
 
@@ -104,7 +114,7 @@ struct QqEvent {
 }
 
 async fn qq_event(State(state): State<AppState>, Json(event): Json<QqEvent>) -> impl IntoResponse {
-    let Some(reply) = qq_reply(&state.github, &event) else {
+    let Some(reply) = qq_reply(&state.github, &event, &state.public_base_url) else {
         return (StatusCode::ACCEPTED, Json(json!({ "ignored": true }))).into_response();
     };
 
@@ -136,17 +146,33 @@ struct CardQuery {
 }
 
 async fn github_card(Query(query): Query<CardQuery>) -> impl IntoResponse {
-    match github::render_repo_card(&query.url) {
-        Some(card) => (StatusCode::OK, Json(json!({ "card": card }))).into_response(),
-        None => (
+    match github::fetch_repo_card(&query.url).await {
+        Ok(card) => Html(github::render_repo_card_html(&card)).into_response(),
+        Err(error) => (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "not a github repository url" })),
+            Json(json!({ "error": error.to_string() })),
         )
             .into_response(),
     }
 }
 
-fn qq_reply(config: &GithubConfig, event: &QqEvent) -> Option<String> {
+async fn github_card_svg(Query(query): Query<CardQuery>) -> impl IntoResponse {
+    match github::fetch_repo_card(&query.url).await {
+        Ok(card) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "image/svg+xml; charset=utf-8")],
+            github::render_repo_card_svg(&card),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+fn qq_reply(config: &GithubConfig, event: &QqEvent, public_base_url: &str) -> Option<String> {
     if event.post_type.as_deref() == Some("notice") && event.notice_type.as_deref() == Some("poke")
     {
         return Some("戳我干嘛".to_string());
@@ -175,7 +201,16 @@ fn qq_reply(config: &GithubConfig, event: &QqEvent) -> Option<String> {
         });
     }
 
-    find_github_url(message).and_then(github::render_repo_card)
+    find_github_url(message).map(|url| render_qq_repo_card_message(public_base_url, url))
+}
+
+fn render_qq_repo_card_message(public_base_url: &str, url: &str) -> String {
+    let encoded_url = url::form_urlencoded::byte_serialize(url.as_bytes()).collect::<String>();
+    format!(
+        "[CQ:image,file={}/github/card.svg?url={}]",
+        public_base_url.trim_end_matches('/'),
+        encoded_url
+    )
 }
 
 fn message_mentions_qq(message: &str, qq: i64) -> bool {
@@ -249,6 +284,7 @@ mod tests {
         AppState::new(
             Arc::new(github),
             Arc::new(Notifier::new(Arc::new(MockBot::default()))),
+            "http://127.0.0.1:8080".to_string(),
         )
     }
 
@@ -296,7 +332,10 @@ mod tests {
             group_id: Some(100),
         };
 
-        assert_eq!(qq_reply(&config, &event), Some("[CQ:at,qq=42]".to_string()));
+        assert_eq!(
+            qq_reply(&config, &event, "http://127.0.0.1:8080"),
+            Some("[CQ:at,qq=42]".to_string())
+        );
     }
 
     #[test]
@@ -311,6 +350,6 @@ mod tests {
             group_id: Some(100),
         };
 
-        assert_eq!(qq_reply(&config, &event), None);
+        assert_eq!(qq_reply(&config, &event, "http://127.0.0.1:8080"), None);
     }
 }

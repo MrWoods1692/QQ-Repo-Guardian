@@ -32,7 +32,11 @@ async fn main() -> anyhow::Result<()> {
         let poller = Arc::new(GithubPagePoller::new(github.clone(), notifier.clone())?);
         tokio::spawn(poller.run(Duration::from_secs(config.poller.interval_secs.max(30))));
     }
-    let state = http::AppState::new(github, notifier);
+    let public_base_url = std::env::var("QRG_SERVER_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| format!("http://{}", address));
+    let state = http::AppState::new(github, notifier, public_base_url);
 
     tracing::info!(%address, "starting qq-repo-guardian");
     http::serve(address, state).await

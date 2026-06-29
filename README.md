@@ -25,7 +25,8 @@ cargo run
 - `GET /health` 健康检查。
 - `POST /github/webhook` GitHub Webhook 入口。
 - `POST /qq/event` QQ 消息事件入口。
-- `GET /github/card?url=https://github.com/owner/repo` GitHub 链接解析测试。
+- `GET /github/card?url=https://github.com/owner/repo` GitHub 仓库卡片 HTML 预览。
+- `GET /github/card.svg?url=https://github.com/owner/repo` GitHub 仓库卡片图片。
 
 ## NapCat 配置
 
@@ -57,6 +58,8 @@ timeout_secs = 180
 ```
 
 也可以用环境变量临时覆盖：`QRG_NAPCAT_ENDPOINT`、`QRG_NAPCAT_TOKEN`、`QRG_NAPCAT_COMMAND`、`QRG_NAPCAT_VERSION`、`QRG_NAPCAT_DOWNLOAD_URL`、`QRG_NAPCAT_DIR`、`QRG_NAPCAT_QQ`、`QRG_QQ_BIN`、`QRG_QQ_CONFIG_DIR`、`QRG_SERVER_URL`。发送群消息会调用 NapCat 的 `send_group_msg`，发送私聊会调用 `send_private_msg`。
+
+收到 GitHub 仓库链接时，机器人会发送彩色仓库卡片图片。卡片包含仓库名、作者、头像、链接、Star、Fork、Issue、最近提交时间和 About。`QRG_SERVER_URL` 需要设置成 NapCat 能访问到的服务地址；默认是当前监听地址。
 
 ## 仓库通知配置
 
