@@ -14,6 +14,41 @@ DISPLAY_NUMBER="${QRG_NAPCAT_DISPLAY:-:1}"
 START_XVFB="${QRG_NAPCAT_XVFB:-auto}"
 QQ_BIN="${QRG_QQ_BIN:-}"
 NAPCAT_QQ="${QRG_NAPCAT_QQ:-${QRG_QQ_ACCOUNT:-}}"
+QQ_CONFIG_DIR="${QRG_QQ_CONFIG_DIR:-$HOME/.config/QQ}"
+DRY_RUN="${QRG_NAPCAT_DRY_RUN:-0}"
+
+read_qq_current_version() {
+  config_path="$QQ_CONFIG_DIR/versions/config.json"
+  if [ ! -f "$config_path" ]; then
+    return 0
+  fi
+
+  sed -n 's/.*"curVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$config_path" | head -n 1
+}
+
+configure_qq_version_paths() {
+  current_version=$(read_qq_current_version)
+  if [ -z "$current_version" ]; then
+    return 0
+  fi
+
+  version_dir="$QQ_CONFIG_DIR/versions/$current_version"
+  if [ ! -d "$version_dir" ]; then
+    return 0
+  fi
+
+  if [ -f "$version_dir/package.json" ]; then
+    export NAPCAT_QQ_PACKAGE_INFO_PATH="${NAPCAT_QQ_PACKAGE_INFO_PATH:-$version_dir/package.json}"
+  fi
+  if [ -f "$QQ_CONFIG_DIR/versions/config.json" ]; then
+    export NAPCAT_QQ_VERSION_CONFIG_PATH="${NAPCAT_QQ_VERSION_CONFIG_PATH:-$QQ_CONFIG_DIR/versions/config.json}"
+  fi
+  if [ -f "$version_dir/wrapper.node" ]; then
+    export NAPCAT_WRAPPER_PATH="${NAPCAT_WRAPPER_PATH:-$version_dir/wrapper.node}"
+  fi
+
+  echo "Detected Linux QQ quick-update version $current_version."
+}
 
 detect_quick_login_qq() {
   if ! command -v strings >/dev/null 2>&1; then
@@ -30,6 +65,38 @@ detect_quick_login_qq() {
     fi
   done
 }
+
+if [ -z "$QQ_BIN" ]; then
+  for candidate in /opt/QQ/qq /usr/bin/qq /usr/local/bin/qq; do
+    if [ -x "$candidate" ]; then
+      QQ_BIN="$candidate"
+      break
+    fi
+  done
+fi
+
+if [ -z "$QQ_BIN" ] || [ ! -x "$QQ_BIN" ]; then
+  echo "Linux QQ executable was not found." >&2
+  echo "Install Linux QQ first, or set QRG_QQ_BIN=/path/to/qq." >&2
+  echo "NapCat release notes recommend QQ 3.2.23 / build 44343 or newer." >&2
+  exit 1
+fi
+
+if [ -z "$NAPCAT_QQ" ]; then
+  NAPCAT_QQ=$(detect_quick_login_qq)
+fi
+
+configure_qq_version_paths
+
+if [ "$DRY_RUN" = "1" ]; then
+  echo "NapCat dry run"
+  echo "QQ_BIN=$QQ_BIN"
+  echo "NAPCAT_QQ=$NAPCAT_QQ"
+  echo "NAPCAT_QQ_PACKAGE_INFO_PATH=${NAPCAT_QQ_PACKAGE_INFO_PATH:-}"
+  echo "NAPCAT_QQ_VERSION_CONFIG_PATH=${NAPCAT_QQ_VERSION_CONFIG_PATH:-}"
+  echo "NAPCAT_WRAPPER_PATH=${NAPCAT_WRAPPER_PATH:-}"
+  exit 0
+fi
 
 mkdir -p "$NAPCAT_DIR"
 
@@ -69,26 +136,6 @@ if [ ! -f "$NAPCAT_DIR/libnapcat_launcher.so" ]; then
 
   echo "Building NapCat Linux launcher..."
   g++ -shared -fPIC "$NAPCAT_DIR/launcher.cpp" -o "$NAPCAT_DIR/libnapcat_launcher.so" -ldl
-fi
-
-if [ -z "$QQ_BIN" ]; then
-  for candidate in /opt/QQ/qq /usr/bin/qq /usr/local/bin/qq; do
-    if [ -x "$candidate" ]; then
-      QQ_BIN="$candidate"
-      break
-    fi
-  done
-fi
-
-if [ -z "$QQ_BIN" ] || [ ! -x "$QQ_BIN" ]; then
-  echo "Linux QQ executable was not found." >&2
-  echo "Install Linux QQ first, or set QRG_QQ_BIN=/path/to/qq." >&2
-  echo "NapCat release notes recommend QQ 3.2.23 / build 44343 or newer." >&2
-  exit 1
-fi
-
-if [ -z "$NAPCAT_QQ" ]; then
-  NAPCAT_QQ=$(detect_quick_login_qq)
 fi
 
 PORT=$(printf '%s\n' "$NAPCAT_ENDPOINT" | sed -n 's#.*://[^:/]*:\([0-9][0-9]*\).*#\1#p')

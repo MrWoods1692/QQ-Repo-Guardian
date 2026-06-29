@@ -31,7 +31,7 @@ cargo run
 
 ### HTTP API
 
-默认 `cargo run` 会自动调用 `./napcat/start.sh`，下载 NapCat Shell、生成 OneBot HTTP 配置、启动 NapCat，并等待 NapCat HTTP API 可用。首次运行只需要在终端扫描 NapCat 显示的二维码；后续启动会自动尝试读取本机 Linux QQ 登录记录并传给 NapCat 的 `-q` 快速登录参数。
+默认 `cargo run` 会自动调用 `./napcat/start.sh`，下载 NapCat Shell、生成 OneBot HTTP 配置、启动 NapCat，并等待 NapCat HTTP API 可用。首次运行只需要在终端扫描 NapCat 显示的二维码；后续启动会自动尝试读取本机 Linux QQ 登录记录并传给 NapCat 的 `-q` 快速登录参数。Linux QQ 自动更新后，脚本也会优先读取 `~/.config/QQ/versions/config.json`，让 NapCat 使用当前实际运行的 QQ 版本文件。
 
 如果自动识别不到账号，可以手动指定：
 
@@ -56,7 +56,7 @@ timeout_secs = 180
 # token = "你的 NapCat access token"
 ```
 
-也可以用环境变量临时覆盖：`QRG_NAPCAT_ENDPOINT`、`QRG_NAPCAT_TOKEN`、`QRG_NAPCAT_COMMAND`、`QRG_NAPCAT_VERSION`、`QRG_NAPCAT_DOWNLOAD_URL`、`QRG_NAPCAT_DIR`、`QRG_NAPCAT_QQ`、`QRG_QQ_BIN`、`QRG_SERVER_URL`。发送群消息会调用 NapCat 的 `send_group_msg`，发送私聊会调用 `send_private_msg`。
+也可以用环境变量临时覆盖：`QRG_NAPCAT_ENDPOINT`、`QRG_NAPCAT_TOKEN`、`QRG_NAPCAT_COMMAND`、`QRG_NAPCAT_VERSION`、`QRG_NAPCAT_DOWNLOAD_URL`、`QRG_NAPCAT_DIR`、`QRG_NAPCAT_QQ`、`QRG_QQ_BIN`、`QRG_QQ_CONFIG_DIR`、`QRG_SERVER_URL`。发送群消息会调用 NapCat 的 `send_group_msg`，发送私聊会调用 `send_private_msg`。
 
 ## 仓库通知配置
 
