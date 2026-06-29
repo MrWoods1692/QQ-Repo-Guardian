@@ -36,7 +36,15 @@ impl GithubPagePoller {
     pub async fn run(self: Arc<Self>, interval: Duration) {
         loop {
             if let Err(error) = self.poll_once().await {
-                tracing::warn!(?error, "GitHub page poll failed");
+                if is_timeout_error(&error) {
+                    tracing::warn!(
+                        ?error,
+                        retry_after_secs = interval.as_secs(),
+                        "GitHub page poll timed out; will retry on next interval"
+                    );
+                } else {
+                    tracing::warn!(?error, "GitHub page poll failed");
+                }
             }
             tokio::time::sleep(interval).await;
         }
@@ -143,6 +151,14 @@ fn xml_text(source: &str, tag: &str) -> Option<String> {
 fn between<'a>(source: &'a str, start: &str, end: &str) -> Option<&'a str> {
     let value = source.split_once(start)?.1;
     Some(value.split_once(end)?.0)
+}
+
+fn is_timeout_error(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<reqwest::Error>()
+            .is_some_and(reqwest::Error::is_timeout)
+    })
 }
 
 fn html_unescape(value: &str) -> String {
