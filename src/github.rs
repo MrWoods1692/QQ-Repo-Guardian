@@ -1,6 +1,6 @@
+use base64::Engine;
 use serde::Deserialize;
 use serde_json::Value;
-use std::io::Cursor;
 
 use crate::config::FeatureConfig;
 
@@ -120,6 +120,7 @@ pub struct RepositoryCard {
     pub full_name: String,
     pub url: String,
     pub avatar_url: String,
+    pub avatar_data_uri: Option<String>,
     pub about: String,
     pub stars: u64,
     pub forks: u64,
@@ -172,7 +173,8 @@ pub async fn fetch_repo_card(url: &str) -> anyhow::Result<RepositoryCard> {
     let slug = parse_github_repository_url(url)
         .ok_or_else(|| anyhow::anyhow!("not a github repository url"))?;
     let api_url = format!("https://api.github.com/repos/{}/{}", slug.owner, slug.repo);
-    let body = reqwest::Client::new()
+    let client = reqwest::Client::new();
+    let body = client
         .get(api_url)
         .header(reqwest::header::USER_AGENT, "qq-repo-guardian")
         .send()
@@ -181,6 +183,7 @@ pub async fn fetch_repo_card(url: &str) -> anyhow::Result<RepositoryCard> {
         .text()
         .await?;
     let repository: ApiRepository = serde_json::from_str(&body)?;
+    let avatar_data_uri = fetch_avatar_data_uri(&client, &repository.owner.avatar_url).await;
 
     Ok(RepositoryCard {
         owner: repository.owner.login,
@@ -188,6 +191,7 @@ pub async fn fetch_repo_card(url: &str) -> anyhow::Result<RepositoryCard> {
         full_name: repository.full_name,
         url: repository.html_url,
         avatar_url: repository.owner.avatar_url,
+        avatar_data_uri,
         about: repository
             .description
             .filter(|value| !value.trim().is_empty())
@@ -200,6 +204,32 @@ pub async fn fetch_repo_card(url: &str) -> anyhow::Result<RepositoryCard> {
             .map(format_github_time)
             .unwrap_or_else(|| "unknown".to_string()),
     })
+}
+
+async fn fetch_avatar_data_uri(client: &reqwest::Client, url: &str) -> Option<String> {
+    let response = client
+        .get(url)
+        .header(reqwest::header::USER_AGENT, "qq-repo-guardian")
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?;
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("image/png")
+        .split(';')
+        .next()
+        .unwrap_or("image/png")
+        .to_string();
+    if !content_type.starts_with("image/") {
+        return None;
+    }
+    let bytes = response.bytes().await.ok()?;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    Some(format!("data:{content_type};base64,{encoded}"))
 }
 
 pub fn render_repo_card_html(card: &RepositoryCard) -> String {
@@ -228,114 +258,72 @@ pub fn render_repo_card_html(card: &RepositoryCard) -> String {
 }
 
 pub fn render_repo_card_svg(card: &RepositoryCard) -> String {
-    let about = truncate_for_card(&card.about, 120);
+    let avatar_href = card.avatar_data_uri.as_deref().unwrap_or(&card.avatar_url);
+    let about_lines = svg_text_lines(&card.about, 56, 2, 58, 238, 21, 0);
+    let recent = truncate_for_card(&card.recent_commit_time, 10);
     format!(
         r##"<svg xmlns="http://www.w3.org/2000/svg" width="760" height="420" viewBox="0 0 760 420">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#0ea5e9"/>
-      <stop offset="0.46" stop-color="#4f46e5"/>
-      <stop offset="1" stop-color="#ec4899"/>
+            <stop offset="0" stop-color="#0f766e"/>
+            <stop offset="0.48" stop-color="#2563eb"/>
+            <stop offset="1" stop-color="#db2777"/>
     </linearGradient>
     <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#ffffff" stop-opacity="0.96"/>
-      <stop offset="1" stop-color="#f8fafc" stop-opacity="0.92"/>
+            <stop offset="0" stop-color="#ffffff" stop-opacity="0.98"/>
+            <stop offset="1" stop-color="#f8fafc" stop-opacity="0.95"/>
     </linearGradient>
-    <clipPath id="avatarClip"><circle cx="96" cy="96" r="46"/></clipPath>
+        <clipPath id="avatarClip"><circle cx="102" cy="102" r="48"/></clipPath>
     <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
-      <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#0f172a" flood-opacity="0.25"/>
+            <feDropShadow dx="0" dy="18" stdDeviation="20" flood-color="#0f172a" flood-opacity="0.28"/>
     </filter>
   </defs>
   <rect width="760" height="420" rx="28" fill="url(#bg)"/>
-  <circle cx="630" cy="74" r="92" fill="#ffffff" opacity="0.13"/>
-  <circle cx="692" cy="334" r="138" fill="#fef3c7" opacity="0.18"/>
-  <rect x="36" y="36" width="688" height="348" rx="22" fill="url(#panel)" filter="url(#shadow)"/>
-  <image x="50" y="50" width="92" height="92" href="{}" preserveAspectRatio="xMidYMid slice" clip-path="url(#avatarClip)"/>
-  <circle cx="96" cy="96" r="47" fill="none" stroke="#ffffff" stroke-width="4"/>
-  <text x="164" y="78" fill="#64748b" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="21" font-weight="700">{}</text>
-  <text x="164" y="118" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="34" font-weight="800">{}</text>
-  <text x="164" y="150" fill="#2563eb" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18">{}</text>
-  <text x="54" y="214" fill="#334155" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="20" font-weight="650">About</text>
-  <text x="54" y="246" fill="#475569" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19">{}</text>
-  <rect x="54" y="286" width="146" height="64" rx="16" fill="#eff6ff"/>
-  <rect x="218" y="286" width="146" height="64" rx="16" fill="#f0fdf4"/>
-  <rect x="382" y="286" width="146" height="64" rx="16" fill="#fff7ed"/>
-  <rect x="546" y="286" width="132" height="64" rx="16" fill="#fdf2f8"/>
-  <text x="76" y="314" fill="#1d4ed8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">Stars</text>
-  <text x="76" y="340" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="25" font-weight="800">{}</text>
-  <text x="240" y="314" fill="#15803d" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">Forks</text>
-  <text x="240" y="340" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="25" font-weight="800">{}</text>
-  <text x="404" y="314" fill="#c2410c" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">Issues</text>
-  <text x="404" y="340" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="25" font-weight="800">{}</text>
-  <text x="568" y="314" fill="#be185d" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">Recent</text>
-  <text x="568" y="340" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="19" font-weight="800">{}</text>
+    <path d="M0 104 C90 44 166 40 260 88 C348 132 420 100 514 48 C606 -2 698 16 760 76 L760 0 L0 0Z" fill="#ffffff" opacity="0.14"/>
+    <path d="M586 366 C640 312 704 300 760 320 L760 420 L548 420 C546 400 558 384 586 366Z" fill="#fde68a" opacity="0.24"/>
+    <rect x="34" y="34" width="692" height="352" rx="24" fill="url(#panel)" filter="url(#shadow)"/>
+    <rect x="54" y="54" width="96" height="96" rx="48" fill="#e0f2fe"/>
+    <image x="54" y="54" width="96" height="96" href="{}" preserveAspectRatio="xMidYMid slice" clip-path="url(#avatarClip)"/>
+    <circle cx="102" cy="102" r="50" fill="none" stroke="#ffffff" stroke-width="5"/>
+    <g transform="translate(166 56)">
+        <text x="0" y="22" fill="#64748b" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="20" font-weight="700">{}</text>
+        <text x="0" y="64" fill="#0f172a" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="35" font-weight="850">{}</text>
+        <path d="M3 88h13a10 10 0 0 0 10-10v-4M13 78l-10 10 10 10" fill="none" stroke="#2563eb" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        <text x="36" y="96" fill="#2563eb" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18">{}</text>
+    </g>
+    <text x="58" y="206" fill="#334155" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="800">ABOUT</text>
+    <text fill="#475569" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="500">{}</text>
+    <rect x="54" y="294" width="150" height="62" rx="14" fill="#ecfeff"/>
+    <rect x="220" y="294" width="150" height="62" rx="14" fill="#f0fdf4"/>
+    <rect x="386" y="294" width="150" height="62" rx="14" fill="#fff7ed"/>
+    <rect x="552" y="294" width="136" height="62" rx="14" fill="#fdf2f8"/>
+    <path d="M82 312l4.5 9.2 10.1 1.5-7.3 7.1 1.7 10-9-4.7-9 4.7 1.7-10-7.3-7.1 10.1-1.5z" fill="#0891b2"/>
+    <text x="104" y="318" fill="#0e7490" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14" font-weight="800">STARS</text>
+    <text x="104" y="342" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24" font-weight="850">{}</text>
+    <path d="M250 313h14v14h-14zM264 320h10v14h-14v-7" fill="none" stroke="#16a34a" stroke-width="3" stroke-linejoin="round"/>
+    <text x="274" y="318" fill="#15803d" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14" font-weight="800">FORKS</text>
+    <text x="274" y="342" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24" font-weight="850">{}</text>
+    <circle cx="418" cy="324" r="13" fill="none" stroke="#ea580c" stroke-width="3"/><path d="M418 316v11M418 333h.1" stroke="#ea580c" stroke-width="3" stroke-linecap="round"/>
+    <text x="440" y="318" fill="#c2410c" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14" font-weight="800">ISSUES</text>
+    <text x="440" y="342" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24" font-weight="850">{}</text>
+    <path d="M579 313v24M567 325h24M573 319l6-6 6 6M573 331l6 6 6-6" fill="none" stroke="#be185d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="602" y="318" fill="#be185d" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14" font-weight="800">RECENT</text>
+    <text x="602" y="342" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="850">{}</text>
 </svg>"##,
-        escape_html(&card.avatar_url),
+        escape_html(avatar_href),
         escape_html(&card.owner),
         escape_html(&card.name),
-        escape_html(&card.url),
-        escape_html(&about),
+        escape_html(&truncate_middle(&card.url, 58)),
+        about_lines,
         format_count(card.stars),
         format_count(card.forks),
         format_count(card.issues),
-        escape_html(&card.recent_commit_time),
+        escape_html(&recent),
     )
 }
 
 pub fn render_repo_card_png(card: &RepositoryCard) -> anyhow::Result<Vec<u8>> {
-    let mut canvas = PngCanvas::new(760, 420, [238, 242, 255, 255]);
-    canvas.gradient([14, 165, 233, 255], [236, 72, 153, 255]);
-    canvas.rect(36, 36, 688, 348, [250, 252, 255, 244]);
-    canvas.rect(54, 54, 92, 92, [219, 234, 254, 255]);
-    canvas.text(74, 92, "GH", 4, [29, 78, 216, 255]);
-    canvas.text(164, 74, &card.owner, 3, [100, 116, 139, 255]);
-    canvas.text(164, 112, &card.name, 5, [15, 23, 42, 255]);
-    canvas.text(164, 150, &card.url, 2, [37, 99, 235, 255]);
-    canvas.text(54, 214, "ABOUT", 3, [51, 65, 85, 255]);
-    canvas.text(
-        54,
-        246,
-        &truncate_for_card(&card.about, 82),
-        3,
-        [71, 85, 105, 255],
-    );
-    draw_metric(
-        &mut canvas,
-        54,
-        286,
-        "STARS",
-        &format_count(card.stars),
-        [239, 246, 255, 255],
-        [29, 78, 216, 255],
-    );
-    draw_metric(
-        &mut canvas,
-        218,
-        286,
-        "FORKS",
-        &format_count(card.forks),
-        [240, 253, 244, 255],
-        [21, 128, 61, 255],
-    );
-    draw_metric(
-        &mut canvas,
-        382,
-        286,
-        "ISSUES",
-        &format_count(card.issues),
-        [255, 247, 237, 255],
-        [194, 65, 12, 255],
-    );
-    draw_metric(
-        &mut canvas,
-        546,
-        286,
-        "RECENT",
-        &card.recent_commit_time,
-        [253, 242, 248, 255],
-        [190, 24, 93, 255],
-    );
-    canvas.finish_png()
+    svg_to_png(&render_repo_card_svg(card))
 }
 
 pub fn render_change_card_svg(card: &ChangeCard) -> String {
@@ -356,24 +344,25 @@ pub fn render_change_card_svg(card: &ChangeCard) -> String {
       <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#0f172a" flood-opacity="0.26"/>
     </filter>
   </defs>
-  <rect width="820" height="460" rx="28" fill="url(#changeBg)"/>
-  <path d="M70 96 C142 26 260 24 342 82 C436 150 520 110 606 56 C668 17 744 35 792 94 L792 0 L0 0 L0 154 C20 137 42 117 70 96Z" fill="#ffffff" opacity="0.14"/>
-  <circle cx="706" cy="356" r="118" fill="#fef3c7" opacity="0.18"/>
-  <rect x="38" y="38" width="744" height="384" rx="22" fill="url(#changePanel)" filter="url(#changeShadow)"/>
-  <rect x="64" y="66" width="132" height="38" rx="19" fill="#dbeafe"/>
-  <text x="84" y="91" fill="#1d4ed8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="800">Repo Change</text>
-  <text x="64" y="146" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="35" font-weight="850">{}</text>
-  <text x="64" y="181" fill="#475569" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="20" font-weight="650">{}</text>
-  <rect x="64" y="216" width="168" height="68" rx="16" fill="#eff6ff"/>
-  <rect x="248" y="216" width="168" height="68" rx="16" fill="#f0fdf4"/>
-  <rect x="432" y="216" width="286" height="68" rx="16" fill="#fdf2f8"/>
-  <text x="86" y="245" fill="#1d4ed8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="750">Branch</text>
-  <text x="86" y="269" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="850">{}</text>
-  <text x="270" y="245" fill="#15803d" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="750">Actor</text>
-  <text x="270" y="269" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="850">{}</text>
-  <text x="454" y="245" fill="#be185d" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="750">Summary</text>
-  <text x="454" y="269" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="21" font-weight="850">{}</text>
-  <text x="64" y="326" fill="#334155" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="20" font-weight="750">Recent commits</text>
+    <rect width="820" height="460" rx="28" fill="url(#changeBg)"/>
+    <path d="M70 96 C142 26 260 24 342 82 C436 150 520 110 606 56 C668 17 744 35 792 94 L792 0 L0 0 L0 154 C20 137 42 117 70 96Z" fill="#ffffff" opacity="0.14"/>
+    <path d="M650 388 C696 346 752 338 820 366 L820 460 L600 460 C600 430 616 408 650 388Z" fill="#fde68a" opacity="0.23"/>
+    <rect x="38" y="38" width="744" height="384" rx="22" fill="url(#changePanel)" filter="url(#changeShadow)"/>
+    <rect x="64" y="66" width="146" height="38" rx="19" fill="#dbeafe"/>
+    <path d="M85 77v11h11M96 88l-14 14M100 76h16v16" fill="none" stroke="#1d4ed8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="124" y="91" fill="#1d4ed8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="800">CHANGE</text>
+    <text x="64" y="146" fill="#0f172a" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="34" font-weight="850">{}</text>
+    <text x="64" y="181" fill="#475569" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="20" font-weight="650">{}</text>
+    <rect x="64" y="216" width="168" height="68" rx="14" fill="#eff6ff"/>
+    <rect x="248" y="216" width="168" height="68" rx="14" fill="#f0fdf4"/>
+    <rect x="432" y="216" width="286" height="68" rx="14" fill="#fdf2f8"/>
+    <path d="M88 238l8 8-8 8M106 254h16" fill="none" stroke="#1d4ed8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="86" y="269" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="850">{}</text>
+    <circle cx="278" cy="246" r="11" fill="none" stroke="#15803d" stroke-width="3"/><path d="M278 257v8M266 265h24" stroke="#15803d" stroke-width="3" stroke-linecap="round"/>
+    <text x="302" y="269" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="850">{}</text>
+    <path d="M456 236h22v20h-22zM462 242h10" fill="none" stroke="#be185d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="486" y="269" fill="#0f172a" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="20" font-weight="850">{}</text>
+    <text x="64" y="326" fill="#334155" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="20" font-weight="750">RECENT COMMITS</text>
   {}
   <text x="64" y="398" fill="#2563eb" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17">{}</text>
 </svg>"##,
@@ -388,56 +377,7 @@ pub fn render_change_card_svg(card: &ChangeCard) -> String {
 }
 
 pub fn render_change_card_png(card: &ChangeCard) -> anyhow::Result<Vec<u8>> {
-    let mut canvas = PngCanvas::new(820, 460, [238, 242, 255, 255]);
-    canvas.gradient([8, 145, 178, 255], [124, 58, 237, 255]);
-    canvas.rect(38, 38, 744, 384, [250, 252, 255, 246]);
-    canvas.rect(64, 66, 156, 38, [219, 234, 254, 255]);
-    canvas.text(84, 91, "REPO CHANGE", 2, [29, 78, 216, 255]);
-    canvas.text(64, 146, &card.title, 5, [15, 23, 42, 255]);
-    canvas.text(64, 181, &card.repository, 3, [71, 85, 105, 255]);
-    draw_metric(
-        &mut canvas,
-        64,
-        216,
-        "BRANCH",
-        &card.branch,
-        [239, 246, 255, 255],
-        [29, 78, 216, 255],
-    );
-    draw_metric(
-        &mut canvas,
-        248,
-        216,
-        "ACTOR",
-        &card.actor,
-        [240, 253, 244, 255],
-        [21, 128, 61, 255],
-    );
-    canvas.rect(432, 216, 286, 68, [253, 242, 248, 255]);
-    canvas.text(454, 245, "SUMMARY", 2, [190, 24, 93, 255]);
-    canvas.text(454, 269, &card.summary, 3, [15, 23, 42, 255]);
-    canvas.text(64, 326, "RECENT COMMITS", 3, [51, 65, 85, 255]);
-    if card.commits.is_empty() {
-        canvas.text(
-            64,
-            356,
-            "No commit detail available.",
-            3,
-            [100, 116, 139, 255],
-        );
-    } else {
-        for (index, commit) in card.commits.iter().take(3).enumerate() {
-            canvas.text(
-                64,
-                356 + index as u32 * 25,
-                &format!("{} - {}", commit.message, commit.author),
-                3,
-                [15, 23, 42, 255],
-            );
-        }
-    }
-    canvas.text(64, 398, &card.url, 2, [37, 99, 235, 255]);
-    canvas.finish_png()
+    svg_to_png(&render_change_card_svg(card))
 }
 
 pub fn change_card_query(card: &ChangeCard) -> String {
@@ -518,166 +458,93 @@ fn render_change_commit_rows(commits: &[ChangeCommit]) -> String {
         .join("\n  ")
 }
 
-fn draw_metric(
-    canvas: &mut PngCanvas,
+fn svg_to_png(svg: &str) -> anyhow::Result<Vec<u8>> {
+    let mut options = resvg::usvg::Options::default();
+    options.fontdb_mut().load_system_fonts();
+    let tree = resvg::usvg::Tree::from_str(svg, &options)?;
+    let size = tree.size().to_int_size();
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(size.width(), size.height())
+        .ok_or_else(|| anyhow::anyhow!("invalid svg size"))?;
+    resvg::render(
+        &tree,
+        resvg::tiny_skia::Transform::default(),
+        &mut pixmap.as_mut(),
+    );
+    pixmap
+        .encode_png()
+        .map_err(|error| anyhow::anyhow!("encode png failed: {error}"))
+}
+
+fn svg_text_lines(
+    value: &str,
+    max_chars: usize,
+    max_lines: usize,
     x: u32,
     y: u32,
-    label: &str,
-    value: &str,
-    background: [u8; 4],
-    accent: [u8; 4],
-) {
-    canvas.rect(x, y, 146, 64, background);
-    canvas.text(x + 22, y + 28, label, 2, accent);
-    canvas.text(x + 22, y + 54, value, 3, [15, 23, 42, 255]);
+    line_height: u32,
+    indent: u32,
+) -> String {
+    let lines = wrap_text(value, max_chars, max_lines);
+    lines
+        .iter()
+        .enumerate()
+        .map(|(index, line)| {
+            format!(
+                r##"<tspan x="{}" y="{}">{}</tspan>"##,
+                x + if index == 0 { 0 } else { indent },
+                y + index as u32 * line_height,
+                escape_html(line)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("")
 }
 
-struct PngCanvas {
-    image: image::RgbaImage,
-}
-
-impl PngCanvas {
-    fn new(width: u32, height: u32, color: [u8; 4]) -> Self {
-        Self {
-            image: image::RgbaImage::from_pixel(width, height, image::Rgba(color)),
-        }
+fn wrap_text(value: &str, max_chars: usize, max_lines: usize) -> Vec<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return vec!["No description provided.".to_string()];
     }
 
-    fn gradient(&mut self, start: [u8; 4], end: [u8; 4]) {
-        let width = self.image.width().saturating_sub(1).max(1);
-        let height = self.image.height().saturating_sub(1).max(1);
-        for y in 0..self.image.height() {
-            for x in 0..self.image.width() {
-                let ratio = (x + y) as f32 / (width + height) as f32;
-                let color = blend(start, end, ratio);
-                self.image.put_pixel(x, y, image::Rgba(color));
-            }
-        }
-    }
-
-    fn rect(&mut self, x: u32, y: u32, width: u32, height: u32, color: [u8; 4]) {
-        let max_x = (x + width).min(self.image.width());
-        let max_y = (y + height).min(self.image.height());
-        for py in y..max_y {
-            for px in x..max_x {
-                self.image.put_pixel(px, py, image::Rgba(color));
-            }
-        }
-    }
-
-    fn text(&mut self, x: u32, y: u32, value: &str, scale: u32, color: [u8; 4]) {
-        let mut cursor = x;
-        for ch in normalize_text(value).chars().take(96) {
-            if ch == ' ' {
-                cursor += 4 * scale;
-                continue;
-            }
-            draw_char(
-                &mut self.image,
-                cursor,
-                y.saturating_sub(7 * scale),
-                ch,
-                scale,
-                color,
-            );
-            cursor += 6 * scale;
-            if cursor + 5 * scale >= self.image.width() {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in split_wrappable(trimmed) {
+        let separator = if current.is_empty() || word.chars().all(|ch| !ch.is_ascii()) {
+            ""
+        } else {
+            " "
+        };
+        let next_len = current.chars().count() + separator.chars().count() + word.chars().count();
+        if !current.is_empty() && next_len > max_chars {
+            lines.push(current);
+            current = word;
+            if lines.len() + 1 == max_lines {
                 break;
             }
+        } else {
+            current.push_str(separator);
+            current.push_str(&word);
         }
     }
-
-    fn finish_png(self) -> anyhow::Result<Vec<u8>> {
-        let mut output = Cursor::new(Vec::new());
-        image::DynamicImage::ImageRgba8(self.image)
-            .write_to(&mut output, image::ImageOutputFormat::Png)?;
-        Ok(output.into_inner())
+    if !current.is_empty() && lines.len() < max_lines {
+        lines.push(current);
     }
-}
-
-fn blend(start: [u8; 4], end: [u8; 4], ratio: f32) -> [u8; 4] {
-    let mut color = [0; 4];
-    for index in 0..4 {
-        color[index] =
-            (start[index] as f32 + (end[index] as f32 - start[index] as f32) * ratio) as u8;
+    if lines.is_empty() {
+        lines.push(truncate_for_card(trimmed, max_chars));
     }
-    color
-}
-
-fn normalize_text(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| if ch.is_ascii() { ch } else { '?' })
-        .collect()
-}
-
-fn draw_char(image: &mut image::RgbaImage, x: u32, y: u32, ch: char, scale: u32, color: [u8; 4]) {
-    for (row_index, row) in glyph(ch).iter().enumerate() {
-        for col in 0..5 {
-            if row & (1 << (4 - col)) == 0 {
-                continue;
-            }
-            let px = x + col * scale;
-            let py = y + row_index as u32 * scale;
-            for sy in 0..scale {
-                for sx in 0..scale {
-                    let target_x = px + sx;
-                    let target_y = py + sy;
-                    if target_x < image.width() && target_y < image.height() {
-                        image.put_pixel(target_x, target_y, image::Rgba(color));
-                    }
-                }
-            }
-        }
+    if trimmed.chars().count() > lines.iter().map(|line| line.chars().count()).sum::<usize>()
+        && let Some(last) = lines.last_mut()
+    {
+        *last = truncate_for_card(last, max_chars.saturating_sub(1));
     }
+    lines
 }
 
-fn glyph(ch: char) -> [u8; 7] {
-    match ch.to_ascii_uppercase() {
-        'A' => [0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11],
-        'B' => [0x1e, 0x11, 0x11, 0x1e, 0x11, 0x11, 0x1e],
-        'C' => [0x0e, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0e],
-        'D' => [0x1e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1e],
-        'E' => [0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x1f],
-        'F' => [0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x10],
-        'G' => [0x0e, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0f],
-        'H' => [0x11, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11],
-        'I' => [0x0e, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0e],
-        'J' => [0x01, 0x01, 0x01, 0x01, 0x11, 0x11, 0x0e],
-        'K' => [0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11],
-        'L' => [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1f],
-        'M' => [0x11, 0x1b, 0x15, 0x15, 0x11, 0x11, 0x11],
-        'N' => [0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11],
-        'O' => [0x0e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e],
-        'P' => [0x1e, 0x11, 0x11, 0x1e, 0x10, 0x10, 0x10],
-        'Q' => [0x0e, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0d],
-        'R' => [0x1e, 0x11, 0x11, 0x1e, 0x14, 0x12, 0x11],
-        'S' => [0x0f, 0x10, 0x10, 0x0e, 0x01, 0x01, 0x1e],
-        'T' => [0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04],
-        'U' => [0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e],
-        'V' => [0x11, 0x11, 0x11, 0x11, 0x11, 0x0a, 0x04],
-        'W' => [0x11, 0x11, 0x11, 0x15, 0x15, 0x15, 0x0a],
-        'X' => [0x11, 0x11, 0x0a, 0x04, 0x0a, 0x11, 0x11],
-        'Y' => [0x11, 0x11, 0x0a, 0x04, 0x04, 0x04, 0x04],
-        'Z' => [0x1f, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1f],
-        '0' => [0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e],
-        '1' => [0x04, 0x0c, 0x04, 0x04, 0x04, 0x04, 0x0e],
-        '2' => [0x0e, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1f],
-        '3' => [0x1e, 0x01, 0x01, 0x0e, 0x01, 0x01, 0x1e],
-        '4' => [0x02, 0x06, 0x0a, 0x12, 0x1f, 0x02, 0x02],
-        '5' => [0x1f, 0x10, 0x10, 0x1e, 0x01, 0x01, 0x1e],
-        '6' => [0x0e, 0x10, 0x10, 0x1e, 0x11, 0x11, 0x0e],
-        '7' => [0x1f, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08],
-        '8' => [0x0e, 0x11, 0x11, 0x0e, 0x11, 0x11, 0x0e],
-        '9' => [0x0e, 0x11, 0x11, 0x0f, 0x01, 0x01, 0x0e],
-        '/' => [0x01, 0x01, 0x02, 0x04, 0x08, 0x10, 0x10],
-        ':' => [0x00, 0x04, 0x04, 0x00, 0x04, 0x04, 0x00],
-        '.' => [0x00, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x0c],
-        '-' => [0x00, 0x00, 0x00, 0x1f, 0x00, 0x00, 0x00],
-        '_' => [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f],
-        '#' => [0x0a, 0x1f, 0x0a, 0x0a, 0x1f, 0x0a, 0x00],
-        '?' => [0x0e, 0x11, 0x01, 0x02, 0x04, 0x00, 0x04],
-        _ => [0x00, 0x00, 0x0e, 0x01, 0x0f, 0x11, 0x0f],
+fn split_wrappable(value: &str) -> Vec<String> {
+    if value.chars().any(|ch| !ch.is_ascii()) {
+        value.chars().map(|ch| ch.to_string()).collect()
+    } else {
+        value.split_whitespace().map(ToString::to_string).collect()
     }
 }
 
@@ -706,6 +573,26 @@ fn truncate_for_card(value: &str, max_chars: usize) -> String {
         result.push('…');
     }
     result
+}
+
+fn truncate_middle(value: &str, max_chars: usize) -> String {
+    let total = value.chars().count();
+    if total <= max_chars || max_chars < 5 {
+        return value.to_string();
+    }
+
+    let head_len = (max_chars - 1) / 2;
+    let tail_len = max_chars - 1 - head_len;
+    let head = value.chars().take(head_len).collect::<String>();
+    let tail = value
+        .chars()
+        .rev()
+        .take(tail_len)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<String>();
+    format!("{head}…{tail}")
 }
 
 fn escape_html(value: &str) -> String {
@@ -961,7 +848,8 @@ mod tests {
             full_name: "owner/project".to_string(),
             url: "https://github.com/owner/project".to_string(),
             avatar_url: "https://avatars.githubusercontent.com/u/1?v=4".to_string(),
-            about: "A useful project".to_string(),
+            avatar_data_uri: None,
+            about: "一个好用的项目".to_string(),
             stars: 15320,
             forks: 821,
             issues: 12,
@@ -972,8 +860,9 @@ mod tests {
         assert!(svg.contains("owner"));
         assert!(svg.contains("project"));
         assert!(svg.contains("15.3K"));
-        assert!(svg.contains("Issues"));
-        assert!(svg.contains("A useful project"));
+        assert!(svg.contains("ISSUES"));
+        assert!(svg.contains("一个"));
+        assert!(svg.contains("<path"));
     }
 
     #[test]
@@ -984,7 +873,8 @@ mod tests {
             full_name: "owner/project".to_string(),
             url: "https://github.com/owner/project".to_string(),
             avatar_url: "https://avatars.githubusercontent.com/u/1?v=4".to_string(),
-            about: "A useful project".to_string(),
+            avatar_data_uri: None,
+            about: "一个好用的项目".to_string(),
             stars: 15320,
             forks: 821,
             issues: 12,
