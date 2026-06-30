@@ -276,7 +276,7 @@ pub fn render_repo_card_html(card: &RepositoryCard) -> String {
 
 pub fn render_repo_card_svg(card: &RepositoryCard) -> String {
     let avatar_href = card.avatar_data_uri.as_deref().unwrap_or(&card.avatar_url);
-    let about_lines = svg_text_lines(&card.about, 56, 2, 58, 238, 21, 0);
+    let about_lines = svg_text_lines(&card.about, 48, 2, 58, 238, 21, 0);
     let recent = truncate_for_card(&card.recent_commit_time, 10);
     format!(
         r##"<svg xmlns="http://www.w3.org/2000/svg" width="760" height="420" viewBox="0 0 760 420">
@@ -291,6 +291,7 @@ pub fn render_repo_card_svg(card: &RepositoryCard) -> String {
             <stop offset="1" stop-color="#f8fafc" stop-opacity="0.95"/>
     </linearGradient>
         <clipPath id="avatarClip"><circle cx="102" cy="102" r="48"/></clipPath>
+        <clipPath id="aboutClip"><rect x="58" y="218" width="632" height="48" rx="0"/></clipPath>
     <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
             <feDropShadow dx="0" dy="18" stdDeviation="20" flood-color="#0f172a" flood-opacity="0.28"/>
     </filter>
@@ -309,7 +310,7 @@ pub fn render_repo_card_svg(card: &RepositoryCard) -> String {
         <text x="36" y="96" fill="#2563eb" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18">{}</text>
     </g>
     <text x="58" y="206" fill="#334155" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="800">ABOUT</text>
-    <text fill="#475569" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="500">{}</text>
+    <text clip-path="url(#aboutClip)" fill="#475569" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="500">{}</text>
     <rect x="54" y="294" width="150" height="62" rx="14" fill="#ecfeff"/>
     <rect x="220" y="294" width="150" height="62" rx="14" fill="#f0fdf4"/>
     <rect x="386" y="294" width="150" height="62" rx="14" fill="#fff7ed"/>
@@ -880,6 +881,29 @@ mod tests {
         assert!(svg.contains("ISSUES"));
         assert!(svg.contains("一个"));
         assert!(svg.contains("<path"));
+    }
+
+    #[test]
+    fn clips_long_repo_card_about_text() {
+        let card = RepositoryCard {
+            owner: "owner".to_string(),
+            name: "project".to_string(),
+            full_name: "owner/project".to_string(),
+            url: "https://github.com/owner/project".to_string(),
+            avatar_url: "https://avatars.githubusercontent.com/u/1?v=4".to_string(),
+            avatar_data_uri: None,
+            about: "A very long repository description with many details about integrations, automation, dashboards, notifications, scheduling, monitoring, and release workflows".to_string(),
+            stars: 15320,
+            forks: 821,
+            issues: 12,
+            recent_commit_time: "2026-06-29".to_string(),
+        };
+
+        let svg = render_repo_card_svg(&card);
+
+        assert!(svg.contains("clipPath id=\"aboutClip\""));
+        assert!(svg.contains("clip-path=\"url(#aboutClip)\""));
+        assert!(!svg.contains("release workflows"));
     }
 
     #[test]
