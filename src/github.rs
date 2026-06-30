@@ -522,7 +522,7 @@ fn change_card_commit_note(count: usize) -> String {
     }
 }
 
-fn svg_to_png(svg: &str) -> anyhow::Result<Vec<u8>> {
+pub(crate) fn svg_to_png(svg: &str) -> anyhow::Result<Vec<u8>> {
     let mut options = resvg::usvg::Options::default();
     options.fontdb_mut().load_system_fonts();
     let tree = resvg::usvg::Tree::from_str(svg, &options)?;

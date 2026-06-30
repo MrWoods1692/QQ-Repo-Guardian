@@ -17,6 +17,7 @@ use crate::{
     config::{GithubConfig, NotifyTarget},
     github,
     notifier::Notifier,
+    qq::{self, MemberCard, MemberCardKind},
     scheduler::ScheduleRuntime,
 };
 
@@ -57,6 +58,7 @@ pub fn router(state: AppState) -> Router {
         .route("/github/card.png", get(github_card_png))
         .route("/github/change.svg", get(github_change_svg))
         .route("/github/change.png", get(github_change_png))
+        .route("/qq/member.png", get(qq_member_png))
         .with_state(state)
 }
 
@@ -117,10 +119,12 @@ async fn github_webhook(
 struct QqEvent {
     post_type: Option<String>,
     notice_type: Option<String>,
+    sub_type: Option<String>,
     message: Option<String>,
     user_id: Option<i64>,
     self_id: Option<i64>,
     group_id: Option<i64>,
+    operator_id: Option<i64>,
 }
 
 async fn qq_event(State(state): State<AppState>, Json(event): Json<QqEvent>) -> impl IntoResponse {
@@ -129,6 +133,30 @@ async fn qq_event(State(state): State<AppState>, Json(event): Json<QqEvent>) -> 
         && let Err(error) = schedule.maybe_send_late_reminder(group_id).await
     {
         tracing::warn!(group_id, ?error, "failed to send late-night reminder");
+    }
+
+    if let Some(message) = qq_member_notice(&state.github, &event, &state.public_base_url) {
+        let Some(group_id) = event.group_id else {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "missing group_id" })),
+            )
+                .into_response();
+        };
+        match state
+            .notifier
+            .send_direct(&NotifyTarget::Group { id: group_id }, &message)
+            .await
+        {
+            Ok(()) => return (StatusCode::OK, Json(json!({ "sent": true }))).into_response(),
+            Err(error) => {
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    Json(json!({ "error": error.to_string() })),
+                )
+                    .into_response();
+            }
+        }
     }
 
     let Some(reply) = qq_reply(&state.github, &event, &state.public_base_url) else {
@@ -246,6 +274,75 @@ async fn github_change_png(
         )
             .into_response(),
     }
+}
+
+async fn qq_member_png(
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let encoded = url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(query.iter())
+        .finish();
+    let card = qq::member_card_from_query(&encoded);
+    match qq::render_member_card_png(&card) {
+        Ok(png) => (StatusCode::OK, [(header::CONTENT_TYPE, "image/png")], png).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+fn qq_member_notice(
+    config: &GithubConfig,
+    event: &QqEvent,
+    public_base_url: &str,
+) -> Option<String> {
+    if event.post_type.as_deref() != Some("notice") {
+        return None;
+    }
+    let group_id = event.group_id?;
+    if !configured_group_ids(config).contains(&group_id) {
+        return None;
+    }
+
+    let (kind, text) = match event.notice_type.as_deref()? {
+        "group_increase" => (
+            MemberCardKind::Join,
+            format!("欢迎 [CQ:at,qq={}] 加入本群。", event.user_id?),
+        ),
+        "group_decrease" => (
+            MemberCardKind::Leave,
+            format!("成员 {} 已离开本群。", event.user_id?),
+        ),
+        _ => return None,
+    };
+    let card = MemberCard {
+        kind,
+        group_id,
+        user_id: event.user_id?,
+        operator_id: event.operator_id,
+        sub_type: event.sub_type.clone(),
+    };
+
+    Some(format!(
+        "{}\n[CQ:image,file={}/qq/member.png?{}]",
+        text,
+        public_base_url.trim_end_matches('/'),
+        qq::member_card_query(&card)
+    ))
+}
+
+fn configured_group_ids(config: &GithubConfig) -> std::collections::HashSet<i64> {
+    config
+        .repositories
+        .iter()
+        .flat_map(|repository| repository.targets.iter())
+        .filter_map(|target| match target {
+            NotifyTarget::Group { id } => Some(*id),
+            NotifyTarget::Private { .. } => None,
+        })
+        .collect()
 }
 
 fn qq_reply(config: &GithubConfig, event: &QqEvent, public_base_url: &str) -> Option<String> {
@@ -404,10 +501,12 @@ mod tests {
         let event = QqEvent {
             post_type: Some("message".to_string()),
             notice_type: None,
+            sub_type: None,
             message: Some("[CQ:at,qq=123] ping".to_string()),
             user_id: Some(42),
             self_id: Some(123),
             group_id: Some(100),
+            operator_id: None,
         };
 
         assert_eq!(
@@ -422,12 +521,76 @@ mod tests {
         let event = QqEvent {
             post_type: Some("message".to_string()),
             notice_type: None,
+            sub_type: None,
             message: Some("[CQ:at,qq=999] ping".to_string()),
             user_id: Some(42),
             self_id: Some(123),
             group_id: Some(100),
+            operator_id: None,
         };
 
         assert_eq!(qq_reply(&config, &event, "http://127.0.0.1:8080"), None);
+    }
+
+    #[test]
+    fn renders_group_join_notice_with_member_card() {
+        let config = test_state().github.as_ref().clone();
+        let event = QqEvent {
+            post_type: Some("notice".to_string()),
+            notice_type: Some("group_increase".to_string()),
+            sub_type: Some("approve".to_string()),
+            message: None,
+            user_id: Some(42),
+            self_id: Some(123),
+            group_id: Some(100),
+            operator_id: Some(7),
+        };
+
+        let message = qq_member_notice(&config, &event, "http://127.0.0.1:8080").unwrap();
+
+        assert!(message.contains("欢迎 [CQ:at,qq=42] 加入本群。"));
+        assert!(message.contains("/qq/member.png?"));
+        assert!(message.contains("kind=join"));
+    }
+
+    #[test]
+    fn renders_group_leave_notice_with_member_card() {
+        let config = test_state().github.as_ref().clone();
+        let event = QqEvent {
+            post_type: Some("notice".to_string()),
+            notice_type: Some("group_decrease".to_string()),
+            sub_type: Some("leave".to_string()),
+            message: None,
+            user_id: Some(42),
+            self_id: Some(123),
+            group_id: Some(100),
+            operator_id: None,
+        };
+
+        let message = qq_member_notice(&config, &event, "http://127.0.0.1:8080").unwrap();
+
+        assert!(message.contains("成员 42 已离开本群。"));
+        assert!(message.contains("/qq/member.png?"));
+        assert!(message.contains("kind=leave"));
+    }
+
+    #[test]
+    fn ignores_member_notice_from_unconfigured_group() {
+        let config = test_state().github.as_ref().clone();
+        let event = QqEvent {
+            post_type: Some("notice".to_string()),
+            notice_type: Some("group_increase".to_string()),
+            sub_type: Some("approve".to_string()),
+            message: None,
+            user_id: Some(42),
+            self_id: Some(123),
+            group_id: Some(999),
+            operator_id: Some(7),
+        };
+
+        assert_eq!(
+            qq_member_notice(&config, &event, "http://127.0.0.1:8080"),
+            None
+        );
     }
 }
