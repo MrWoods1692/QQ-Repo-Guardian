@@ -135,29 +135,39 @@ impl ScheduleRuntime {
 
         for group_id in self.groups.iter().copied() {
             let key = (date.to_string(), kind, group_id);
-            let mut sent_daily = self.sent_daily.lock().await;
-            if !sent_daily.insert(key) {
+            if self.sent_daily.lock().await.contains(&key) {
                 continue;
             }
-            drop(sent_daily);
 
-            match kind {
+            let completed = match kind {
                 DailyKind::Sign => {
+                    tracing::info!(group_id, "signing QQ group");
                     if let Err(error) = self.notifier.sign_group(group_id).await {
                         tracing::warn!(group_id, ?error, "failed to sign QQ group");
+                        false
+                    } else {
+                        tracing::info!(group_id, "signed QQ group");
+                        true
                     }
                 }
                 DailyKind::Morning => {
                     self.send_group_message(group_id, MessageKind::Morning)
                         .await?;
+                    true
                 }
                 DailyKind::Noon => {
                     self.send_group_message(group_id, MessageKind::Noon).await?;
+                    true
                 }
                 DailyKind::Evening => {
                     self.send_group_message(group_id, MessageKind::Evening)
                         .await?;
+                    true
                 }
+            };
+
+            if completed {
+                self.sent_daily.lock().await.insert(key);
             }
         }
 
@@ -383,3 +393,42 @@ const LATE_ENDINGS: &[&str] = &[
     "好梦比强撑更重要。",
     "今天可以先到这。",
 ];
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use chrono::NaiveTime;
+
+    use super::*;
+    use crate::bot::MockBot;
+
+    #[tokio::test]
+    async fn signs_every_configured_group() {
+        let bot = Arc::new(MockBot::default());
+        let notifier = Arc::new(Notifier::new(bot.clone()));
+        let runtime = ScheduleRuntime::new(
+            ScheduleConfig::default(),
+            notifier,
+            &[
+                NotifyTarget::Group { id: 1091113674 },
+                NotifyTarget::Group { id: 955437397 },
+                NotifyTarget::Private { id: 1692138502 },
+            ],
+        );
+
+        runtime
+            .run_daily_if_due(
+                "2026-06-30",
+                NaiveTime::from_hms_opt(9, 1, 0).unwrap(),
+                DailyKind::Sign,
+                "09:00",
+            )
+            .await
+            .unwrap();
+
+        let mut group_signs = bot.group_signs();
+        group_signs.sort_unstable();
+        assert_eq!(group_signs, vec![955437397, 1091113674]);
+    }
+}

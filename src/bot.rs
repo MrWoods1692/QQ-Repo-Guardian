@@ -262,11 +262,19 @@ mod napcat_client {
 #[derive(Default)]
 pub struct MockBot {
     messages: Mutex<Vec<(NotifyTarget, String)>>,
+    group_signs: Mutex<Vec<i64>>,
 }
 
 impl MockBot {
     pub fn messages(&self) -> Vec<(NotifyTarget, String)> {
         self.messages
+            .lock()
+            .expect("mock bot mutex poisoned")
+            .clone()
+    }
+
+    pub fn group_signs(&self) -> Vec<i64> {
+        self.group_signs
             .lock()
             .expect("mock bot mutex poisoned")
             .clone()
@@ -281,6 +289,15 @@ impl BotClient for MockBot {
             .expect("mock bot mutex poisoned")
             .push((target.clone(), message.to_string()));
         tracing::info!(?target, %message, "mock bot message");
+        Ok(())
+    }
+
+    async fn sign_group(&self, group_id: i64) -> anyhow::Result<()> {
+        self.group_signs
+            .lock()
+            .expect("mock bot mutex poisoned")
+            .push(group_id);
+        tracing::info!(group_id, "mock bot group sign");
         Ok(())
     }
 }
