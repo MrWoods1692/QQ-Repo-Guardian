@@ -146,7 +146,7 @@ async fn qq_event(State(state): State<AppState>, Json(event): Json<QqEvent>) -> 
         tracing::warn!(group_id, ?error, "failed to send late-night reminder");
     }
 
-    if let Some(message) = qq_member_notice(&state.github, &event, &state.public_base_url) {
+    if let Some(message) = qq_member_notice(&state, &event).await {
         let Some(group_id) = event.group_id else {
             return (
                 StatusCode::BAD_REQUEST,
@@ -359,12 +359,20 @@ async fn github_change_png(
 }
 
 async fn qq_member_png(
+    State(state): State<AppState>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
     let encoded = url::form_urlencoded::Serializer::new(String::new())
         .extend_pairs(query.iter())
         .finish();
-    let card = qq::member_card_from_query(&encoded);
+    let mut card = qq::member_card_from_query(&encoded);
+    if let Err(error) = qq::hydrate_member_card_avatar(&state.github_client, &mut card).await {
+        tracing::warn!(
+            user_id = card.user_id,
+            ?error,
+            "failed to hydrate QQ member avatar"
+        );
+    }
     match qq::render_member_card_png(&card) {
         Ok(png) => (StatusCode::OK, [(header::CONTENT_TYPE, "image/png")], png).into_response(),
         Err(error) => (
@@ -375,16 +383,12 @@ async fn qq_member_png(
     }
 }
 
-fn qq_member_notice(
-    config: &GithubConfig,
-    event: &QqEvent,
-    public_base_url: &str,
-) -> Option<String> {
+async fn qq_member_notice(state: &AppState, event: &QqEvent) -> Option<String> {
     if event.post_type.as_deref() != Some("notice") {
         return None;
     }
     let group_id = event.group_id?;
-    if !configured_group_ids(config).contains(&group_id) {
+    if !configured_group_ids(&state.github).contains(&group_id) {
         return None;
     }
 
@@ -405,12 +409,40 @@ fn qq_member_notice(
         user_id: event.user_id?,
         operator_id: event.operator_id,
         sub_type: event.sub_type.clone(),
+        nickname: None,
+        card: None,
+        level: None,
+        title: None,
+        avatar_data_uri: None,
+    };
+    let card = match state
+        .notifier
+        .group_member_profile(group_id, card.user_id)
+        .await
+    {
+        Ok(Some(profile)) => MemberCard {
+            nickname: profile.nickname,
+            card: profile.card,
+            level: profile.level,
+            title: profile.title,
+            ..card
+        },
+        Ok(None) => card,
+        Err(error) => {
+            tracing::warn!(
+                group_id,
+                user_id = card.user_id,
+                ?error,
+                "failed to fetch QQ member profile"
+            );
+            card
+        }
     };
 
     Some(format!(
         "{}\n[CQ:image,file={}/qq/member.png?{}]",
         text,
-        public_base_url.trim_end_matches('/'),
+        state.public_base_url.trim_end_matches('/'),
         qq::member_card_query(&card)
     ))
 }
@@ -515,7 +547,7 @@ fn verify_signature(
 mod tests {
     use super::*;
     use crate::{
-        bot::MockBot,
+        bot::{GroupMemberProfile, MockBot},
         config::{FeatureConfig, ModerationConfig, RepositoryConfig, SimpleRepositoryConfig},
     };
     use axum::{
@@ -629,9 +661,20 @@ mod tests {
         assert_eq!(qq_reply(&config, &event, "http://127.0.0.1:8080"), None);
     }
 
-    #[test]
-    fn renders_group_join_notice_with_member_card() {
-        let config = test_state().github.as_ref().clone();
+    #[tokio::test]
+    async fn renders_group_join_notice_with_member_card() {
+        let bot = Arc::new(MockBot::default());
+        bot.set_group_member_profile(
+            100,
+            42,
+            GroupMemberProfile {
+                nickname: Some("Alice".to_string()),
+                card: Some("小爱".to_string()),
+                level: Some("66".to_string()),
+                title: Some("群星".to_string()),
+            },
+        );
+        let state = test_state_with_bot_and_moderation(bot, ModerationConfig::default());
         let event = QqEvent {
             post_type: Some("notice".to_string()),
             notice_type: Some("group_increase".to_string()),
@@ -645,16 +688,18 @@ mod tests {
             operator_id: Some(7),
         };
 
-        let message = qq_member_notice(&config, &event, "http://127.0.0.1:8080").unwrap();
+        let message = qq_member_notice(&state, &event).await.unwrap();
 
         assert!(message.contains("欢迎 [CQ:at,qq=42] 加入本群。"));
         assert!(message.contains("/qq/member.png?"));
         assert!(message.contains("kind=join"));
+        assert!(message.contains("card=%E5%B0%8F%E7%88%B1"));
+        assert!(message.contains("level=66"));
     }
 
-    #[test]
-    fn renders_group_leave_notice_with_member_card() {
-        let config = test_state().github.as_ref().clone();
+    #[tokio::test]
+    async fn renders_group_leave_notice_with_member_card() {
+        let state = test_state();
         let event = QqEvent {
             post_type: Some("notice".to_string()),
             notice_type: Some("group_decrease".to_string()),
@@ -668,16 +713,16 @@ mod tests {
             operator_id: None,
         };
 
-        let message = qq_member_notice(&config, &event, "http://127.0.0.1:8080").unwrap();
+        let message = qq_member_notice(&state, &event).await.unwrap();
 
         assert!(message.contains("成员 42 已离开本群。"));
         assert!(message.contains("/qq/member.png?"));
         assert!(message.contains("kind=leave"));
     }
 
-    #[test]
-    fn ignores_member_notice_from_unconfigured_group() {
-        let config = test_state().github.as_ref().clone();
+    #[tokio::test]
+    async fn ignores_member_notice_from_unconfigured_group() {
+        let state = test_state();
         let event = QqEvent {
             post_type: Some("notice".to_string()),
             notice_type: Some("group_increase".to_string()),
@@ -691,10 +736,7 @@ mod tests {
             operator_id: Some(7),
         };
 
-        assert_eq!(
-            qq_member_notice(&config, &event, "http://127.0.0.1:8080"),
-            None
-        );
+        assert_eq!(qq_member_notice(&state, &event).await, None);
     }
 
     #[tokio::test]

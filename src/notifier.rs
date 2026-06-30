@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    bot::BotClient,
+    bot::{BotClient, GroupMemberProfile},
     config::{GithubConfig, NotifyTarget},
     github::{self, Notification},
 };
@@ -192,6 +192,14 @@ impl Notifier {
 
     pub async fn delete_message(&self, message_id: i64) -> anyhow::Result<()> {
         self.bot.delete_message(message_id).await
+    }
+
+    pub async fn group_member_profile(
+        &self,
+        group_id: i64,
+        user_id: i64,
+    ) -> anyhow::Result<Option<GroupMemberProfile>> {
+        self.bot.group_member_profile(group_id, user_id).await
     }
 
     fn render_message(&self, notification: &Notification) -> String {

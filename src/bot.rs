@@ -26,6 +26,14 @@ use serde::Deserialize;
 
 use crate::config::{BotConfig, NotifyTarget};
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GroupMemberProfile {
+    pub nickname: Option<String>,
+    pub card: Option<String>,
+    pub level: Option<String>,
+    pub title: Option<String>,
+}
+
 #[async_trait]
 pub trait BotClient: Send + Sync {
     async fn send(&self, target: &NotifyTarget, message: &str) -> anyhow::Result<()>;
@@ -33,6 +41,15 @@ pub trait BotClient: Send + Sync {
     async fn delete_message(&self, message_id: i64) -> anyhow::Result<()> {
         let _ = message_id;
         anyhow::bail!("current bot core does not support message recall")
+    }
+
+    async fn group_member_profile(
+        &self,
+        group_id: i64,
+        user_id: i64,
+    ) -> anyhow::Result<Option<GroupMemberProfile>> {
+        let _ = (group_id, user_id);
+        Ok(None)
     }
 
     async fn sign_group(&self, group_id: i64) -> anyhow::Result<()> {
@@ -91,7 +108,11 @@ mod napcat_client {
             })
         }
 
-        async fn post(&self, action: &str, payload: serde_json::Value) -> anyhow::Result<()> {
+        async fn post_json(
+            &self,
+            action: &str,
+            payload: serde_json::Value,
+        ) -> anyhow::Result<serde_json::Value> {
             let url = format!("{}/{}", self.endpoint, action);
             let mut request = self
                 .client
@@ -105,16 +126,21 @@ mod napcat_client {
             let response = request.send().await?.error_for_status()?;
             let status = response.status();
             let body = response.text().await?;
-            validate_napcat_response(&body)
+            let value = validate_napcat_response(&body)
                 .with_context(|| format!("NapCat action {action} failed"))?;
             tracing::debug!(%url, %status, "sent action through NapCat");
+            Ok(value)
+        }
+
+        async fn post(&self, action: &str, payload: serde_json::Value) -> anyhow::Result<()> {
+            self.post_json(action, payload).await?;
             Ok(())
         }
     }
 
-    fn validate_napcat_response(body: &str) -> anyhow::Result<()> {
+    fn validate_napcat_response(body: &str) -> anyhow::Result<serde_json::Value> {
         if body.trim().is_empty() {
-            return Ok(());
+            return Ok(serde_json::Value::Null);
         }
 
         let value: serde_json::Value = serde_json::from_str(body)
@@ -130,7 +156,28 @@ mod napcat_client {
             anyhow::bail!("retcode={retcode}, status={status}, message={message}");
         }
 
-        Ok(())
+        Ok(value)
+    }
+
+    fn parse_group_member_profile(value: &serde_json::Value) -> Option<GroupMemberProfile> {
+        let data = value.get("data")?;
+        Some(GroupMemberProfile {
+            nickname: non_empty_string(data.get("nickname")),
+            card: non_empty_string(data.get("card")),
+            level: non_empty_string(data.get("level")),
+            title: non_empty_string(data.get("title"))
+                .or_else(|| non_empty_string(data.get("special_title"))),
+        })
+    }
+
+    fn non_empty_string(value: Option<&serde_json::Value>) -> Option<String> {
+        match value? {
+            serde_json::Value::String(text) if !text.trim().is_empty() => {
+                Some(text.trim().to_string())
+            }
+            serde_json::Value::Number(number) => Some(number.to_string()),
+            _ => None,
+        }
     }
 
     #[async_trait]
@@ -168,6 +215,20 @@ mod napcat_client {
                 serde_json::json!({ "message_id": message_id }),
             )
             .await
+        }
+
+        async fn group_member_profile(
+            &self,
+            group_id: i64,
+            user_id: i64,
+        ) -> anyhow::Result<Option<GroupMemberProfile>> {
+            let value = self
+                .post_json(
+                    "get_group_member_info",
+                    serde_json::json!({ "group_id": group_id, "user_id": user_id, "no_cache": true }),
+                )
+                .await?;
+            Ok(parse_group_member_profile(&value))
         }
     }
 
@@ -324,6 +385,7 @@ pub struct MockBot {
     messages: Mutex<Vec<(NotifyTarget, String)>>,
     group_signs: Mutex<Vec<i64>>,
     deleted_messages: Mutex<Vec<i64>>,
+    member_profiles: Mutex<std::collections::HashMap<(i64, i64), GroupMemberProfile>>,
 }
 
 impl MockBot {
@@ -346,6 +408,18 @@ impl MockBot {
             .lock()
             .expect("mock bot mutex poisoned")
             .clone()
+    }
+
+    pub fn set_group_member_profile(
+        &self,
+        group_id: i64,
+        user_id: i64,
+        profile: GroupMemberProfile,
+    ) {
+        self.member_profiles
+            .lock()
+            .expect("mock bot mutex poisoned")
+            .insert((group_id, user_id), profile);
     }
 }
 
@@ -376,6 +450,19 @@ impl BotClient for MockBot {
             .push(message_id);
         tracing::info!(message_id, "mock bot delete message");
         Ok(())
+    }
+
+    async fn group_member_profile(
+        &self,
+        group_id: i64,
+        user_id: i64,
+    ) -> anyhow::Result<Option<GroupMemberProfile>> {
+        Ok(self
+            .member_profiles
+            .lock()
+            .expect("mock bot mutex poisoned")
+            .get(&(group_id, user_id))
+            .cloned())
     }
 }
 
