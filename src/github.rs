@@ -348,6 +348,7 @@ pub fn render_change_card_svg(card: &ChangeCard) -> String {
     let commit_rows = render_change_commit_rows(&card.commits);
     let detail = change_card_detail(card);
     let commit_note = change_card_commit_note(card.commits.len());
+    let compare_url = truncate_middle(&card.url, 58);
     format!(
         r##"<svg xmlns="http://www.w3.org/2000/svg" width="860" height="520" viewBox="0 0 860 520">
   <defs>
@@ -394,9 +395,10 @@ pub fn render_change_card_svg(card: &ChangeCard) -> String {
         <text x="68" y="334" fill="#334155" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="20" font-weight="850">最近提交明细</text>
         <text x="210" y="334" fill="#64748b" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="600">{}</text>
     {}
-    <rect x="68" y="436" width="684" height="28" rx="14" fill="#eef2ff"/>
-    <path d="M90 445h13a8 8 0 0 1 8 8v0a8 8 0 0 1-8 8H90zM103 453h20" fill="none" stroke="#2563eb" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-    <text x="132" y="456" fill="#2563eb" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">查看完整对比：{}</text>
+    <rect x="68" y="430" width="684" height="42" rx="14" fill="#eef2ff"/>
+    <path d="M92 442h15a9 9 0 0 1 9 9v0a9 9 0 0 1-9 9H92zM107 451h22" fill="none" stroke="#2563eb" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="140" y="448" fill="#1d4ed8" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="850">查看完整对比</text>
+    <text x="140" y="466" fill="#475569" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="650">{}</text>
 </svg>"##,
         escape_html(&truncate_for_card(&card.title, 32)),
         escape_html(&truncate_for_card(&card.repository, 56)),
@@ -405,7 +407,7 @@ pub fn render_change_card_svg(card: &ChangeCard) -> String {
         escape_html(&truncate_for_card(&detail, 18)),
         escape_html(&commit_note),
         commit_rows,
-        escape_html(&truncate_middle(&card.url, 74)),
+        escape_html(&compare_url),
     )
 }
 

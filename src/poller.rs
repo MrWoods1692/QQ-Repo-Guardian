@@ -82,19 +82,7 @@ impl GithubPagePoller {
                             "仓库网页检测到新提交\n仓库: {}\n提交: {}\n作者: {}\n{}",
                             repository.full_name, entry.title, entry.author, entry.link
                         ),
-                        card: Some(ChangeCard {
-                            title: "仓库网页检测到新提交".to_string(),
-                            repository: repository.full_name.clone(),
-                            branch: "default".to_string(),
-                            actor: entry.author.clone(),
-                            summary: "1 latest commit".to_string(),
-                            url: entry.link.clone(),
-                            commits: vec![ChangeCommit {
-                                message: entry.title.clone(),
-                                author: entry.author.clone(),
-                                url: entry.link.clone(),
-                            }],
-                        }),
+                        card: Some(change_card_from_feed_entry(&repository.full_name, &entry)),
                     },
                 )
                 .await?;
@@ -142,6 +130,22 @@ fn parse_latest_commit_entry(feed: &str) -> Option<FeedEntry> {
     })
 }
 
+fn change_card_from_feed_entry(repository: &str, entry: &FeedEntry) -> ChangeCard {
+    ChangeCard {
+        title: "仓库网页检测到新提交".to_string(),
+        repository: repository.to_string(),
+        branch: "默认分支".to_string(),
+        actor: entry.author.clone(),
+        summary: "新增 1 个提交".to_string(),
+        url: entry.link.clone(),
+        commits: vec![ChangeCommit {
+            message: entry.title.clone(),
+            author: entry.author.clone(),
+            url: entry.link.clone(),
+        }],
+    }
+}
+
 fn xml_text(source: &str, tag: &str) -> Option<String> {
     between(source, &format!("<{tag}>"), &format!("</{tag}>"))
         .map(html_unescape)
@@ -184,5 +188,20 @@ mod tests {
         assert_eq!(entry.title, "fix & ship");
         assert_eq!(entry.author, "alice");
         assert_eq!(entry.link, "https://github.com/octo/repo/commit/abc");
+    }
+
+    #[test]
+    fn page_polling_card_uses_readable_default_branch_label() {
+        let entry = FeedEntry {
+            id: "tag:github.com,2008:Grit::Commit/abc".to_string(),
+            title: "fix card".to_string(),
+            author: "alice".to_string(),
+            link: "https://github.com/octo/repo/commit/abc".to_string(),
+        };
+
+        let card = change_card_from_feed_entry("octo/repo", &entry);
+
+        assert_eq!(card.branch, "默认分支");
+        assert_eq!(card.summary, "新增 1 个提交");
     }
 }
