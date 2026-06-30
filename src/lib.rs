@@ -1,8 +1,14 @@
+pub mod ai_pricing;
 pub mod bot;
 pub mod config;
+pub mod deepseek;
 pub mod github;
 pub mod http;
+pub mod link_preview;
+pub mod news;
 pub mod notifier;
 pub mod poller;
 pub mod qq;
 pub mod scheduler;
+pub mod translate;
+pub mod weather;

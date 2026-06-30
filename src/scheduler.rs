@@ -1,37 +1,67 @@
 use std::{
     collections::{HashMap, HashSet},
+    fs,
+    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use chrono::{Local, NaiveTime, Timelike};
 use rand::prelude::IndexedRandom;
+use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::{
     config::{NotifyTarget, ScheduleConfig},
+    news::{self, DailyNewsDigest},
     notifier::Notifier,
+    weather::{self, WeatherSnapshot},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// 一天最多重试拉取快讯的次数
+const NEWS_MAX_RETRIES: u32 = 3;
+/// 每次重试的间隔秒数
+const NEWS_RETRY_DELAY_SECS: u64 = 2;
+/// 天气重试次数
+const WEATHER_MAX_RETRIES: u32 = 3;
+/// 天气重试间隔秒数
+const WEATHER_RETRY_DELAY_SECS: u64 = 2;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum DailyKind {
     Sign,
     Morning,
     Noon,
     Evening,
+    Weather,
 }
+
+const SENT_DAILY_FILE: &str = "sent_daily.json";
 
 #[derive(Clone)]
 pub struct ScheduleRuntime {
     config: ScheduleConfig,
     notifier: Arc<Notifier>,
+    client: reqwest::Client,
     groups: Arc<Vec<i64>>,
     sent_daily: Arc<Mutex<HashSet<(String, DailyKind, i64)>>>,
+    sent_daily_path: PathBuf,
     late_reminders: Arc<Mutex<HashMap<i64, Instant>>>,
+    news_cache: Arc<Mutex<Option<(String, DailyNewsDigest)>>>,
+    weather_cache: Arc<Mutex<Option<(String, WeatherSnapshot)>>>,
+    weather_groups: Arc<Vec<i64>>,
+    public_base_url: Arc<str>,
 }
 
 impl ScheduleRuntime {
-    pub fn new(config: ScheduleConfig, notifier: Arc<Notifier>, targets: &[NotifyTarget]) -> Self {
+    pub fn new(
+        config: ScheduleConfig,
+        notifier: Arc<Notifier>,
+        client: reqwest::Client,
+        targets: &[NotifyTarget],
+        public_base_url: String,
+        sent_daily_override: Option<PathBuf>,
+    ) -> Self {
         let groups = targets
             .iter()
             .filter_map(|target| match target {
@@ -42,17 +72,54 @@ impl ScheduleRuntime {
             .into_iter()
             .collect::<Vec<_>>();
 
+        let weather_groups = if config.weather_groups.is_empty() {
+            groups.clone()
+        } else {
+            config.weather_groups.clone()
+        };
+
+        let sent_daily_path = sent_daily_override.unwrap_or_else(|| PathBuf::from(SENT_DAILY_FILE));
+        let sent_daily = load_sent_daily(&sent_daily_path);
+
         Self {
             config,
             notifier,
+            client,
             groups: Arc::new(groups),
-            sent_daily: Arc::new(Mutex::new(HashSet::new())),
+            sent_daily: Arc::new(Mutex::new(sent_daily)),
+            sent_daily_path,
             late_reminders: Arc::new(Mutex::new(HashMap::new())),
+            news_cache: Arc::new(Mutex::new(None)),
+            weather_cache: Arc::new(Mutex::new(None)),
+            weather_groups: Arc::new(weather_groups),
+            public_base_url: public_base_url.into(),
         }
     }
 
     pub fn has_groups(&self) -> bool {
         !self.groups.is_empty()
+    }
+
+    pub fn api_token(&self) -> Option<&str> {
+        self.config
+            .api_token
+            .as_deref()
+            .filter(|t| !t.trim().is_empty())
+    }
+
+    pub fn weather_location(&self) -> Option<&str> {
+        self.config
+            .weather_location
+            .as_deref()
+            .filter(|loc| !loc.trim().is_empty())
+    }
+
+    pub fn auto_translate(&self) -> bool {
+        self.config.auto_translate
+    }
+
+    pub fn chat_enabled(&self) -> bool {
+        self.config.chat_enabled
     }
 
     pub async fn run(self: Arc<Self>) {
@@ -95,6 +162,24 @@ impl ScheduleRuntime {
 
         let now = Local::now();
         let date = now.date_naive().to_string();
+
+        // 中午到了先统一拉取一次快讯（缓存到 self.news_cache），失败会重试。
+        if self.config.noon_news {
+            self.ensure_noon_news(&date, now.time()).await;
+        }
+
+        // 早上到了先统一拉取一次天气（缓存到 self.weather_cache），失败会重试。
+        if self.config.morning_weather {
+            self.ensure_morning_weather(&date, now.time()).await;
+        }
+
+        self.run_daily_if_due(
+            &date,
+            now.time(),
+            DailyKind::Weather,
+            &self.config.weather_time,
+        )
+        .await?;
         self.run_daily_if_due(
             &date,
             now.time(),
@@ -139,6 +224,14 @@ impl ScheduleRuntime {
                 continue;
             }
 
+            // 天气只推送到 weather_groups（为空则推所有群）
+            if kind == DailyKind::Weather
+                && !self.weather_groups.is_empty()
+                && !self.weather_groups.contains(&group_id)
+            {
+                continue;
+            }
+
             let completed = match kind {
                 DailyKind::Sign => {
                     tracing::info!(group_id, "signing QQ group");
@@ -156,7 +249,7 @@ impl ScheduleRuntime {
                     true
                 }
                 DailyKind::Noon => {
-                    self.send_group_message(group_id, MessageKind::Noon).await?;
+                    self.send_noon_message(group_id).await?;
                     true
                 }
                 DailyKind::Evening => {
@@ -164,10 +257,16 @@ impl ScheduleRuntime {
                         .await?;
                     true
                 }
+                DailyKind::Weather => {
+                    self.send_weather_message(group_id).await?;
+                    true
+                }
             };
 
             if completed {
-                self.sent_daily.lock().await.insert(key);
+                let mut sent = self.sent_daily.lock().await;
+                sent.insert(key.clone());
+                save_sent_daily(&self.sent_daily_path, &sent);
             }
         }
 
@@ -178,6 +277,188 @@ impl ScheduleRuntime {
         self.notifier
             .send_direct(&NotifyTarget::Group { id: group_id }, &random_message(kind))
             .await
+    }
+
+    async fn send_noon_message(&self, group_id: i64) -> anyhow::Result<()> {
+        // 先发温馨问候
+        self.notifier
+            .send_direct(
+                &NotifyTarget::Group { id: group_id },
+                &random_message(MessageKind::Noon),
+            )
+            .await?;
+
+        // 再发快讯（独立一条消息）
+        if self.config.noon_news {
+            if let Some((_, digest)) = self.news_cache.lock().await.as_ref() {
+                self.notifier
+                    .send_direct(
+                        &NotifyTarget::Group { id: group_id },
+                        &news::render_daily_news_message(digest),
+                    )
+                    .await?;
+            } else {
+                tracing::warn!(group_id, "noon news cache is empty, skipping news message");
+            }
+        }
+
+        Ok(())
+    }
+
+    /// 确保当天中午快讯已经拉取到缓存中。如果缓存是当天或还没拉取，且已过中午时间，
+    /// 则请求接口，失败时最多重试 NEWS_MAX_RETRIES 次。
+    async fn ensure_noon_news(&self, date: &str, now: NaiveTime) {
+        let Some(noon_time) = parse_time(&self.config.noon_time) else {
+            return;
+        };
+        if now < noon_time {
+            return;
+        }
+
+        let token = match self
+            .config
+            .api_token
+            .as_deref()
+            .filter(|t| !t.trim().is_empty())
+        {
+            Some(token) => token,
+            None => {
+                tracing::warn!("no schedule.api_token configured");
+                return;
+            }
+        };
+
+        // 如果缓存已是今天的，不再重复拉取
+        {
+            let cache = self.news_cache.lock().await;
+            if cache
+                .as_ref()
+                .is_some_and(|(cached_date, _)| cached_date == date)
+            {
+                return;
+            }
+        }
+
+        for attempt in 1..=NEWS_MAX_RETRIES {
+            match news::fetch_daily_news(&self.client, token).await {
+                Ok(digest) => {
+                    tracing::info!(date = %digest.date, items = digest.items.len(), "fetched daily AI news");
+                    self.news_cache
+                        .lock()
+                        .await
+                        .replace((date.to_string(), digest));
+                    return;
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        attempt,
+                        max_retries = NEWS_MAX_RETRIES,
+                        ?error,
+                        "failed to fetch daily AI news, will retry"
+                    );
+                    if attempt < NEWS_MAX_RETRIES {
+                        tokio::time::sleep(Duration::from_secs(NEWS_RETRY_DELAY_SECS)).await;
+                    }
+                }
+            }
+        }
+
+        tracing::error!(
+            "exhausted {} retries for daily AI news, giving up for today",
+            NEWS_MAX_RETRIES
+        );
+    }
+
+    async fn send_weather_message(&self, group_id: i64) -> anyhow::Result<()> {
+        let cache = self.weather_cache.lock().await;
+        let Some((_, snapshot)) = cache.as_ref() else {
+            anyhow::bail!("weather cache is empty, will retry on next tick");
+        };
+        let base = self.public_base_url.trim_end_matches('/');
+        let card_msg = format!(
+            "[CQ:image,file={base}/qq/weather.png?{}]",
+            weather::weather_card_query(snapshot)
+        );
+        tracing::info!(group_id, city = %snapshot.city, temp = %snapshot.temperature, "sending weather card");
+        drop(cache);
+        self.notifier
+            .send_direct(&NotifyTarget::Group { id: group_id }, &card_msg)
+            .await
+    }
+
+    /// 确保当天早上天气已经拉取到缓存中。失败时最多重试 WEATHER_MAX_RETRIES 次。
+    async fn ensure_morning_weather(&self, date: &str, now: NaiveTime) {
+        let Some(weather_time) = parse_time(&self.config.weather_time) else {
+            return;
+        };
+        if now < weather_time {
+            return;
+        }
+
+        let token = match self
+            .config
+            .api_token
+            .as_deref()
+            .filter(|t| !t.trim().is_empty())
+        {
+            Some(token) => token,
+            None => {
+                tracing::warn!("no schedule.api_token configured");
+                return;
+            }
+        };
+
+        let location = match self.config.weather_location.as_deref() {
+            Some(loc) if !loc.trim().is_empty() => loc.trim(),
+            _ => {
+                tracing::warn!("no schedule.weather_location configured");
+                return;
+            }
+        };
+
+        // 如果缓存已是今天的，不再重复拉取
+        {
+            let cache = self.weather_cache.lock().await;
+            if cache
+                .as_ref()
+                .is_some_and(|(cached_date, _)| cached_date == date)
+            {
+                return;
+            }
+        }
+
+        for attempt in 1..=WEATHER_MAX_RETRIES {
+            match weather::fetch_weather(&self.client, token, location).await {
+                Ok(snapshot) => {
+                    tracing::info!(
+                        city = %snapshot.city,
+                        temp = %snapshot.temperature,
+                        "fetched morning weather"
+                    );
+                    self.weather_cache
+                        .lock()
+                        .await
+                        .replace((date.to_string(), snapshot));
+                    return;
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        attempt,
+                        max_retries = WEATHER_MAX_RETRIES,
+                        ?error,
+                        "failed to fetch weather, will retry"
+                    );
+                    if attempt < WEATHER_MAX_RETRIES {
+                        tokio::time::sleep(Duration::from_secs(WEATHER_RETRY_DELAY_SECS)).await;
+                    }
+                }
+            }
+        }
+
+        tracing::error!(
+            "exhausted {} retries for weather, giving up for today",
+            WEATHER_MAX_RETRIES
+        );
     }
 
     fn is_late_hour(&self, hour: u32) -> bool {
@@ -195,8 +476,35 @@ fn parse_time(value: &str) -> Option<NaiveTime> {
     NaiveTime::parse_from_str(value, "%H:%M").ok()
 }
 
+fn load_sent_daily(path: &PathBuf) -> HashSet<(String, DailyKind, i64)> {
+    let today = Local::now().date_naive().to_string();
+    let Ok(content) = fs::read_to_string(path) else {
+        return HashSet::new();
+    };
+    let Ok(entries) = serde_json::from_str::<Vec<(String, DailyKind, i64)>>(&content) else {
+        tracing::warn!("failed to parse sent_daily file, starting fresh");
+        return HashSet::new();
+    };
+    entries
+        .into_iter()
+        .filter(|(date, _, _)| date == &today)
+        .collect()
+}
+
+fn save_sent_daily(path: &PathBuf, entries: &HashSet<(String, DailyKind, i64)>) {
+    let today = Local::now().date_naive().to_string();
+    let entries: Vec<_> = entries
+        .iter()
+        .filter(|(date, _, _)| date == &today)
+        .cloned()
+        .collect();
+    if let Ok(json) = serde_json::to_string(&entries) {
+        let _ = fs::write(path, json);
+    }
+}
+
 fn is_due_now(now: NaiveTime, due_time: NaiveTime, kind: DailyKind) -> bool {
-    if kind == DailyKind::Sign {
+    if matches!(kind, DailyKind::Sign | DailyKind::Noon) {
         return now >= due_time;
     }
 
@@ -405,16 +713,22 @@ mod tests {
 
     #[tokio::test]
     async fn signs_every_configured_group() {
+        let test_path = PathBuf::from(format!("sent_daily_test_{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&test_path);
+
         let bot = Arc::new(MockBot::default());
         let notifier = Arc::new(Notifier::new(bot.clone()));
         let runtime = ScheduleRuntime::new(
             ScheduleConfig::default(),
             notifier,
+            reqwest::Client::new(),
             &[
                 NotifyTarget::Group { id: 1091113674 },
                 NotifyTarget::Group { id: 955437397 },
                 NotifyTarget::Private { id: 1692138502 },
             ],
+            "http://127.0.0.1:8080".to_string(),
+            Some(test_path.clone()),
         );
 
         runtime
@@ -430,5 +744,16 @@ mod tests {
         let mut group_signs = bot.group_signs();
         group_signs.sort_unstable();
         assert_eq!(group_signs, vec![955437397, 1091113674]);
+
+        let _ = std::fs::remove_file(&test_path);
+    }
+
+    #[test]
+    fn noon_task_catches_up_after_due_time() {
+        assert!(is_due_now(
+            NaiveTime::from_hms_opt(13, 30, 0).unwrap(),
+            NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
+            DailyKind::Noon,
+        ));
     }
 }

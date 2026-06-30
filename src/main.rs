@@ -61,7 +61,10 @@ async fn main() -> anyhow::Result<()> {
         let schedule = Arc::new(ScheduleRuntime::new(
             schedule_config,
             notifier.clone(),
+            github_client.clone(),
             &targets,
+            public_base_url.clone(),
+            None,
         ));
         if schedule.has_groups() {
             tokio::spawn(schedule.clone().run());

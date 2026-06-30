@@ -31,3 +31,6 @@ qrcode.png
 /napcat/*.bat
 /napcat/launcher.cpp
 /napcat/libnapcat_launcher.so
+/sent_daily.json
+/sent_daily_test_*.json
+/guild1.db*

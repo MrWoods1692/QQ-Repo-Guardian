@@ -9,6 +9,8 @@ endpoint = "http://127.0.0.1:3000"
 command = "./napcat/start.sh"
 timeout_secs = 180
 # token = ""
+# 填写 QQ 号以启用快速登录，避免每次扫码；留空则自动尝试从历史登录数据中识别。
+napcat_qq = ""
 
 # 仓库网页轮询：每 interval_secs 秒检查一次 commits.atom；访问 GitHub 超过 timeout_secs 秒就放弃本轮，等待下一轮。
 # interval_secs 最小按 30 秒执行；GitHub 网络不稳定时建议 60 秒轮询、10-15 秒超时。
@@ -27,10 +29,23 @@ group_sign = true
 sign_time = "09:00"
 morning_time = "08:30"
 noon_time = "12:00"
+noon_news = true
+# 所有云智 API（快讯、天气、翻译）共用此 token
+api_token = ""
 evening_time = "22:00"
 late_start_hour = 0
 late_end_hour = 5
 late_remind_cooldown_secs = 7200
+# 每天早上 8 点推送天气；token 使用上面的 api_token。
+morning_weather = true
+weather_location = "北京"
+weather_time = "08:00"
+# weather_groups 留空则推送到所有仓库群；指定群号则只推这些群。
+weather_groups = []
+# 自动翻译群里的非中文消息（引用原消息回复，不艾特）
+auto_translate = true
+# 群内 /chat 命令和私聊聊天（使用 DeepSeek-R1，共用上方 api_token）
+chat_enabled = true
 
 # 群消息违禁词撤回：enabled 开启后，消息包含 forbidden_words 任意词会自动撤回。
 # forbidden_words 留空时不会撤回；Bot 需要是群管理员，NapCat 需要能收到 message_id。

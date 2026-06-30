@@ -65,7 +65,14 @@ pub fn from_config(config: &BotConfig) -> anyhow::Result<Arc<dyn BotClient>> {
             token,
             command,
             timeout_secs,
-        } => napcat_client::start(endpoint, token, command.as_deref(), *timeout_secs),
+            napcat_qq,
+        } => napcat_client::start(
+            endpoint,
+            token,
+            command.as_deref(),
+            *timeout_secs,
+            napcat_qq.as_deref(),
+        ),
         BotConfig::ProcQq {
             device_path,
             session_path,
@@ -237,12 +244,14 @@ mod napcat_client {
         token: &Option<String>,
         command: Option<&str>,
         timeout_secs: u64,
+        napcat_qq: Option<&str>,
     ) -> anyhow::Result<Arc<dyn BotClient>> {
         let endpoint = configured_napcat_endpoint(endpoint)
             .trim_end_matches('/')
             .to_string();
         let token = configured_napcat_token(token);
         let command = configured_napcat_command(command);
+        let napcat_qq = configured_napcat_qq(napcat_qq);
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
 
         tokio::spawn(async move {
@@ -253,6 +262,7 @@ mod napcat_client {
                     token.as_deref(),
                     command.as_deref(),
                     timeout_secs,
+                    napcat_qq.as_deref(),
                 )
                 .await
                 .with_context(|| format!("NapCat HTTP API is not reachable at {endpoint}"))?;
@@ -297,11 +307,24 @@ mod napcat_client {
             })
     }
 
+    fn configured_napcat_qq(configured: Option<&str>) -> Option<String> {
+        std::env::var("QRG_NAPCAT_QQ")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                configured
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+    }
+
     async fn ensure_napcat_ready(
         endpoint: &str,
         token: Option<&str>,
         command: Option<&str>,
         timeout_secs: u64,
+        napcat_qq: Option<&str>,
     ) -> anyhow::Result<()> {
         if napcat_reachable(endpoint, token).await.is_ok() {
             return Ok(());
@@ -314,11 +337,13 @@ mod napcat_client {
         };
 
         tracing::info!(%command, napcat_endpoint = %endpoint, "starting NapCat service");
-        let mut child = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(command)
-            .spawn()
-            .context("failed to start NapCat command")?;
+        let mut cmd = std::process::Command::new("sh");
+        cmd.arg("-c").arg(command);
+        if let Some(qq) = napcat_qq {
+            cmd.env("QRG_NAPCAT_QQ", qq);
+            tracing::info!(%qq, "setting NapCat quick-login account");
+        }
+        let mut child = cmd.spawn().context("failed to start NapCat command")?;
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs.max(1));
         loop {

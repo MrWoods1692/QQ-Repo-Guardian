@@ -14,11 +14,14 @@ use serde_json::json;
 use sha2::Sha256;
 
 use crate::{
+    ai_pricing,
     config::{GithubConfig, ModerationConfig, NotifyTarget},
-    github,
+    deepseek, github,
+    link_preview::{self, LinkPreviewCard},
     notifier::Notifier,
     qq::{self, MemberCard, MemberCardKind},
     scheduler::ScheduleRuntime,
+    translate, weather,
 };
 
 #[derive(Clone)]
@@ -61,7 +64,10 @@ pub fn router(state: AppState) -> Router {
         .route("/github/card.png", get(github_card_png))
         .route("/github/change.svg", get(github_change_svg))
         .route("/github/change.png", get(github_change_png))
+        .route("/qq/ai-pricing.png", get(qq_ai_pricing_png))
+        .route("/qq/link.png", get(qq_link_png))
         .route("/qq/member.png", get(qq_member_png))
+        .route("/qq/weather.png", get(qq_weather_png))
         .with_state(state)
 }
 
@@ -146,6 +152,31 @@ async fn qq_event(State(state): State<AppState>, Json(event): Json<QqEvent>) -> 
         tracing::warn!(group_id, ?error, "failed to send late-night reminder");
     }
 
+    // 自动翻译群里的非中文消息
+    if let Some(reply) = auto_translate_message(&state, &event).await {
+        let Some(group_id) = event.group_id else {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "missing group_id" })),
+            )
+                .into_response();
+        };
+        match state
+            .notifier
+            .send_direct(&NotifyTarget::Group { id: group_id }, &reply)
+            .await
+        {
+            Ok(()) => return (StatusCode::OK, Json(json!({ "sent": true }))).into_response(),
+            Err(error) => {
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    Json(json!({ "error": error.to_string() })),
+                )
+                    .into_response();
+            }
+        }
+    }
+
     if let Some(message) = qq_member_notice(&state, &event).await {
         let Some(group_id) = event.group_id else {
             return (
@@ -170,7 +201,7 @@ async fn qq_event(State(state): State<AppState>, Json(event): Json<QqEvent>) -> 
         }
     }
 
-    let Some(reply) = qq_reply(&state.github, &event, &state.public_base_url) else {
+    let Some(reply) = qq_reply(&state, &event).await else {
         return (StatusCode::ACCEPTED, Json(json!({ "ignored": true }))).into_response();
     };
 
@@ -383,6 +414,62 @@ async fn qq_member_png(
     }
 }
 
+async fn qq_link_png(
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let encoded = url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(query.iter())
+        .finish();
+    let card = link_preview::link_preview_card_from_query(&encoded);
+    match link_preview::render_link_preview_png(&card) {
+        Ok(png) => (StatusCode::OK, [(header::CONTENT_TYPE, "image/png")], png).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn qq_weather_png(
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let encoded = url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(query.iter())
+        .finish();
+    let snapshot = weather::weather_snapshot_from_query(&encoded);
+    match weather::render_weather_png(&snapshot) {
+        Ok(png) => (StatusCode::OK, [(header::CONTENT_TYPE, "image/png")], png).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct AiPricingQuery {
+    provider: Option<String>,
+}
+
+async fn qq_ai_pricing_png(
+    State(state): State<AppState>,
+    Query(query): Query<AiPricingQuery>,
+) -> impl IntoResponse {
+    let providers =
+        ai_pricing::resolve_pricing_for_query(&state.github_client, query.provider.as_deref())
+            .await;
+    match ai_pricing::render_ai_pricing_png(&providers) {
+        Ok(png) => (StatusCode::OK, [(header::CONTENT_TYPE, "image/png")], png).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 async fn qq_member_notice(state: &AppState, event: &QqEvent) -> Option<String> {
     if event.post_type.as_deref() != Some("notice") {
         return None;
@@ -459,7 +546,7 @@ fn configured_group_ids(config: &GithubConfig) -> std::collections::HashSet<i64>
         .collect()
 }
 
-fn qq_reply(config: &GithubConfig, event: &QqEvent, public_base_url: &str) -> Option<String> {
+async fn qq_reply(state: &AppState, event: &QqEvent) -> Option<String> {
     if event.post_type.as_deref() == Some("notice") && event.notice_type.as_deref() == Some("poke")
     {
         return Some("戳我干嘛".to_string());
@@ -473,12 +560,13 @@ fn qq_reply(config: &GithubConfig, event: &QqEvent, public_base_url: &str) -> Op
     }
 
     if let Some(command) = message.strip_prefix("/repo-guardian ") {
-        if !config.admins.contains(&event.user_id?) {
+        if !state.github.admins.contains(&event.user_id?) {
             return Some("没有权限执行管理员指令".to_string());
         }
         return Some(match command.trim() {
             "ping" => "pong".to_string(),
-            "repos" => config
+            "repos" => state
+                .github
                 .repositories
                 .iter()
                 .map(|repo| repo.full_name.as_str())
@@ -488,7 +576,43 @@ fn qq_reply(config: &GithubConfig, event: &QqEvent, public_base_url: &str) -> Op
         });
     }
 
-    find_github_url(message).map(|url| render_qq_repo_card_message(public_base_url, url))
+    // 群聊 /chat 命令
+    if event.group_id.is_some()
+        && let Some(question) = deepseek::parse_chat_command(message)
+    {
+        return Some(render_qq_chat_reply(state, event, &question).await);
+    }
+
+    if let Some(provider_key) = ai_pricing::parse_ai_price_query(message) {
+        return Some(render_qq_ai_pricing_message(state, provider_key.as_deref()).await);
+    }
+
+    if let Some(location) = parse_weather_query(message) {
+        return Some(render_qq_weather_message(state, &location).await);
+    }
+
+    if let Some(url) = find_github_url(message) {
+        return Some(render_qq_repo_card_message(&state.public_base_url, url));
+    }
+
+    let url = link_preview::extract_first_url(message)?;
+    match link_preview::fetch_link_preview(&state.github_client, &url).await {
+        Ok(preview) => Some(render_qq_link_preview_message(
+            &state.public_base_url,
+            &LinkPreviewCard::from(preview),
+        )),
+        Err(error) => {
+            tracing::warn!(url, ?error, "failed to render QQ link preview");
+            None
+        }
+    };
+
+    // 私聊消息走聊天
+    if event.group_id.is_none() && !message.trim().is_empty() {
+        return Some(render_qq_chat_reply(state, event, message.trim()).await);
+    }
+
+    None
 }
 
 fn render_qq_repo_card_message(public_base_url: &str, url: &str) -> String {
@@ -497,6 +621,181 @@ fn render_qq_repo_card_message(public_base_url: &str, url: &str) -> String {
         "[CQ:image,file={}/github/card.png?url={}]",
         public_base_url.trim_end_matches('/'),
         encoded_url
+    )
+}
+
+fn render_qq_link_preview_message(public_base_url: &str, card: &LinkPreviewCard) -> String {
+    let base = public_base_url.trim_end_matches('/');
+    let mut parts = vec![
+        format!(
+            "[CQ:image,file={base}/qq/link.png?{}]",
+            link_preview::link_preview_card_query(card)
+        ),
+        format!(
+            "SEO：{}\n{}\nSSL：{}",
+            card.title,
+            card.description,
+            card.ssl_issuer.as_deref().unwrap_or("未获取到证书机构")
+        ),
+    ];
+    if let Some(image_url) = &card.image_url {
+        parts.push(format!("[CQ:image,file={image_url}]"));
+    }
+    if let Some(video_url) = &card.video_url {
+        parts.push(format!("[CQ:video,file={video_url}]"));
+    }
+    parts.join("\n")
+}
+
+async fn render_qq_ai_pricing_message(state: &AppState, provider_key: Option<&str>) -> String {
+    let providers = ai_pricing::resolve_pricing_for_query(&state.github_client, provider_key).await;
+    render_qq_ai_pricing_message_from_providers(&state.public_base_url, provider_key, &providers)
+}
+
+fn parse_weather_query(message: &str) -> Option<String> {
+    let trimmed = message.trim();
+    if trimmed == "/weather" || trimmed == "/天气" || trimmed == "天气" {
+        return Some(String::new());
+    }
+    for prefix in ["/weather ", "/天气 ", "天气 "] {
+        if let Some(loc) = trimmed.strip_prefix(prefix) {
+            let loc = loc.trim();
+            if !loc.is_empty() {
+                return Some(loc.to_string());
+            }
+        }
+    }
+    None
+}
+
+async fn render_qq_weather_message(state: &AppState, location: &str) -> String {
+    let location: String = if location.is_empty() {
+        state
+            .schedule
+            .as_ref()
+            .and_then(|s| s.weather_location().map(String::from))
+            .unwrap_or_default()
+    } else {
+        location.to_string()
+    };
+
+    if location.is_empty() {
+        return "请指定城市，例如 /天气 北京，或在 config.toml 里配置 weather_location".to_string();
+    }
+
+    let token: Option<String> = state
+        .schedule
+        .as_ref()
+        .and_then(|s| s.api_token().map(String::from));
+    let Some(token) = token else {
+        return "天气查询需要配置 api_token".to_string();
+    };
+
+    match weather::fetch_weather(&state.github_client, &token, &location).await {
+        Ok(snapshot) => {
+            let base = state.public_base_url.trim_end_matches('/');
+            format!(
+                "[CQ:image,file={base}/qq/weather.png?{}]",
+                weather::weather_card_query(&snapshot)
+            )
+        }
+        Err(error) => format!("天气查询失败：{error}"),
+    }
+}
+
+async fn render_qq_chat_reply(state: &AppState, event: &QqEvent, question: &str) -> String {
+    let schedule = match state.schedule.as_ref() {
+        Some(s) => s,
+        None => return "聊天功能未启用（缺少 schedule 配置）".to_string(),
+    };
+
+    if !schedule.chat_enabled() {
+        return "聊天功能未启用".to_string();
+    }
+
+    let token = match schedule.api_token().map(String::from) {
+        Some(t) => t,
+        None => return "聊天功能需要配置 api_token".to_string(),
+    };
+
+    if question.is_empty() {
+        return "用法：/chat 你的问题\n例如：/chat 今天天气怎么样？".to_string();
+    }
+
+    match deepseek::ask_deepseek(&state.github_client, &token, question).await {
+        Ok(reply) => {
+            let msg_id = event.message_id;
+            let answer = if reply.is_empty() {
+                "（模型未返回有效回答）".to_string()
+            } else {
+                reply
+            };
+            match msg_id {
+                Some(id) => format!("[CQ:reply,id={id}]{answer}"),
+                None => answer,
+            }
+        }
+        Err(error) => format!("聊天请求失败：{error}"),
+    }
+}
+
+async fn auto_translate_message(state: &AppState, event: &QqEvent) -> Option<String> {
+    if event.post_type.as_deref() != Some("message") {
+        return None;
+    }
+    if event.group_id.is_none() {
+        return None;
+    }
+    let message = event.message.as_deref()?;
+    // 不要翻译 /chat 命令
+    if deepseek::parse_chat_command(message).is_some() {
+        return None;
+    }
+    let original = translate::needs_translation(message)?;
+
+    let token = state
+        .schedule
+        .as_ref()
+        .and_then(|s| s.api_token().map(String::from));
+    let Some(token) = token else {
+        return None;
+    };
+
+    let schedule = state.schedule.as_ref()?;
+    if !schedule.auto_translate() {
+        return None;
+    }
+
+    match translate::translate_to_chinese(&state.github_client, &token, &original).await {
+        Ok(translated) => {
+            let msg_id = event.message_id?;
+            Some(format!("[CQ:reply,id={msg_id}]翻译：{translated}"))
+        }
+        Err(error) => {
+            tracing::warn!(?error, "auto-translate failed");
+            None
+        }
+    }
+}
+
+fn render_qq_ai_pricing_message_from_providers(
+    public_base_url: &str,
+    provider_key: Option<&str>,
+    providers: &[ai_pricing::ResolvedAiProviderPricing],
+) -> String {
+    let base = public_base_url.trim_end_matches('/');
+    let image = match provider_key {
+        Some(provider_key) => {
+            let encoded =
+                url::form_urlencoded::byte_serialize(provider_key.as_bytes()).collect::<String>();
+            format!("[CQ:image,file={base}/qq/ai-pricing.png?provider={encoded}]")
+        }
+        None => format!("[CQ:image,file={base}/qq/ai-pricing.png]"),
+    };
+    format!(
+        "{}\n{}",
+        image,
+        ai_pricing::render_ai_pricing_text(&providers)
     )
 }
 
@@ -620,9 +919,9 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
     }
 
-    #[test]
-    fn replies_only_when_message_mentions_self() {
-        let config = test_state().github.as_ref().clone();
+    #[tokio::test]
+    async fn replies_only_when_message_mentions_self() {
+        let state = test_state();
         let event = QqEvent {
             post_type: Some("message".to_string()),
             notice_type: None,
@@ -637,14 +936,14 @@ mod tests {
         };
 
         assert_eq!(
-            qq_reply(&config, &event, "http://127.0.0.1:8080"),
+            qq_reply(&state, &event).await,
             Some("[CQ:at,qq=42]".to_string())
         );
     }
 
-    #[test]
-    fn ignores_messages_that_mention_others() {
-        let config = test_state().github.as_ref().clone();
+    #[tokio::test]
+    async fn ignores_messages_that_mention_others() {
+        let state = test_state();
         let event = QqEvent {
             post_type: Some("message".to_string()),
             notice_type: None,
@@ -658,7 +957,75 @@ mod tests {
             operator_id: None,
         };
 
-        assert_eq!(qq_reply(&config, &event, "http://127.0.0.1:8080"), None);
+        assert_eq!(qq_reply(&state, &event).await, None);
+    }
+
+    #[test]
+    fn renders_link_preview_message_with_extracted_media() {
+        let card = LinkPreviewCard {
+            url: "https://example.com/article".to_string(),
+            host: "example.com".to_string(),
+            title: "页面标题".to_string(),
+            description: "页面描述".to_string(),
+            site_name: "示例站点".to_string(),
+            content_type: "text/html".to_string(),
+            image_url: Some("https://example.com/cover.jpg".to_string()),
+            video_url: Some("https://example.com/video.mp4".to_string()),
+            ssl_issuer: Some("Example CA".to_string()),
+        };
+
+        let message = render_qq_link_preview_message("http://127.0.0.1:8080", &card);
+
+        assert!(message.contains("/qq/link.png?"));
+        assert!(message.contains("SEO：页面标题"));
+        assert!(message.contains("SSL：Example CA"));
+        assert!(message.contains("[CQ:image,file=https://example.com/cover.jpg]"));
+        assert!(message.contains("[CQ:video,file=https://example.com/video.mp4]"));
+    }
+
+    #[test]
+    fn renders_ai_pricing_message_with_card_and_text() {
+        let providers = vec![ai_pricing::ResolvedAiProviderPricing {
+            provider: ai_pricing::pricing_for_query(Some("gpt"))
+                .into_iter()
+                .next()
+                .unwrap(),
+            subscription: "Plus $20/month".to_string(),
+            subscription_source: "https://openai.com/chatgpt/pricing/".to_string(),
+            subscription_status: "订阅价来自网页解析".to_string(),
+        }];
+        let message = render_qq_ai_pricing_message_from_providers(
+            "http://127.0.0.1:8080",
+            Some("gpt"),
+            &providers,
+        );
+
+        assert!(message.contains("/qq/ai-pricing.png?provider=gpt"));
+        assert!(message.contains("GPT / OpenAI 价格查询"));
+        assert!(message.contains("订阅："));
+        assert!(message.contains("API："));
+    }
+
+    #[tokio::test]
+    async fn replies_to_ai_pricing_query() {
+        let state = test_state();
+        let event = QqEvent {
+            post_type: Some("message".to_string()),
+            notice_type: None,
+            sub_type: None,
+            message: Some("gpt价格查询".to_string()),
+            raw_message: Some("gpt价格查询".to_string()),
+            message_id: Some(1),
+            user_id: Some(42),
+            self_id: Some(123),
+            group_id: Some(100),
+            operator_id: None,
+        };
+
+        let reply = qq_reply(&state, &event).await.unwrap();
+
+        assert!(reply.contains("/qq/ai-pricing.png?provider=gpt"));
+        assert!(reply.contains("GPT / OpenAI 价格查询"));
     }
 
     #[tokio::test]

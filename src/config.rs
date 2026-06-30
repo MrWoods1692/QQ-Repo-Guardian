@@ -129,6 +129,10 @@ pub struct ScheduleConfig {
     pub morning_time: String,
     #[serde(default = "default_noon_time")]
     pub noon_time: String,
+    #[serde(default = "enabled")]
+    pub noon_news: bool,
+    #[serde(default)]
+    pub api_token: Option<String>,
     #[serde(default = "default_evening_time")]
     pub evening_time: String,
     #[serde(default = "default_late_start_hour")]
@@ -137,6 +141,18 @@ pub struct ScheduleConfig {
     pub late_end_hour: u32,
     #[serde(default = "default_late_remind_cooldown_secs")]
     pub late_remind_cooldown_secs: u64,
+    #[serde(default = "enabled")]
+    pub morning_weather: bool,
+    #[serde(default)]
+    pub weather_location: Option<String>,
+    #[serde(default = "default_weather_time")]
+    pub weather_time: String,
+    #[serde(default)]
+    pub weather_groups: Vec<i64>,
+    #[serde(default = "enabled")]
+    pub auto_translate: bool,
+    #[serde(default = "enabled")]
+    pub chat_enabled: bool,
 }
 
 impl Default for ScheduleConfig {
@@ -147,10 +163,18 @@ impl Default for ScheduleConfig {
             sign_time: default_sign_time(),
             morning_time: default_morning_time(),
             noon_time: default_noon_time(),
+            noon_news: true,
+            api_token: None,
             evening_time: default_evening_time(),
             late_start_hour: default_late_start_hour(),
             late_end_hour: default_late_end_hour(),
             late_remind_cooldown_secs: default_late_remind_cooldown_secs(),
+            morning_weather: true,
+            weather_location: None,
+            weather_time: default_weather_time(),
+            weather_groups: Vec::new(),
+            auto_translate: true,
+            chat_enabled: true,
         }
     }
 }
@@ -181,6 +205,10 @@ fn default_late_end_hour() -> u32 {
 
 fn default_late_remind_cooldown_secs() -> u64 {
     7200
+}
+
+fn default_weather_time() -> String {
+    "08:00".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -224,6 +252,8 @@ pub enum BotConfig {
         command: Option<String>,
         #[serde(default = "default_napcat_timeout_secs")]
         timeout_secs: u64,
+        #[serde(default)]
+        napcat_qq: Option<String>,
     },
     ProcQq {
         #[serde(default = "default_device_path")]
@@ -248,6 +278,7 @@ impl Default for BotConfig {
             token: None,
             command: default_napcat_command(),
             timeout_secs: default_napcat_timeout_secs(),
+            napcat_qq: None,
         }
     }
 }
