@@ -30,6 +30,11 @@ use crate::config::{BotConfig, NotifyTarget};
 pub trait BotClient: Send + Sync {
     async fn send(&self, target: &NotifyTarget, message: &str) -> anyhow::Result<()>;
 
+    async fn delete_message(&self, message_id: i64) -> anyhow::Result<()> {
+        let _ = message_id;
+        anyhow::bail!("current bot core does not support message recall")
+    }
+
     async fn sign_group(&self, group_id: i64) -> anyhow::Result<()> {
         let _ = group_id;
         anyhow::bail!("current bot core does not support group sign")
@@ -153,6 +158,14 @@ mod napcat_client {
             self.post(
                 "send_group_sign",
                 serde_json::json!({ "group_id": group_id }),
+            )
+            .await
+        }
+
+        async fn delete_message(&self, message_id: i64) -> anyhow::Result<()> {
+            self.post(
+                "delete_msg",
+                serde_json::json!({ "message_id": message_id }),
             )
             .await
         }
@@ -310,6 +323,7 @@ mod napcat_client {
 pub struct MockBot {
     messages: Mutex<Vec<(NotifyTarget, String)>>,
     group_signs: Mutex<Vec<i64>>,
+    deleted_messages: Mutex<Vec<i64>>,
 }
 
 impl MockBot {
@@ -322,6 +336,13 @@ impl MockBot {
 
     pub fn group_signs(&self) -> Vec<i64> {
         self.group_signs
+            .lock()
+            .expect("mock bot mutex poisoned")
+            .clone()
+    }
+
+    pub fn deleted_messages(&self) -> Vec<i64> {
+        self.deleted_messages
             .lock()
             .expect("mock bot mutex poisoned")
             .clone()
@@ -345,6 +366,15 @@ impl BotClient for MockBot {
             .expect("mock bot mutex poisoned")
             .push(group_id);
         tracing::info!(group_id, "mock bot group sign");
+        Ok(())
+    }
+
+    async fn delete_message(&self, message_id: i64) -> anyhow::Result<()> {
+        self.deleted_messages
+            .lock()
+            .expect("mock bot mutex poisoned")
+            .push(message_id);
+        tracing::info!(message_id, "mock bot delete message");
         Ok(())
     }
 }

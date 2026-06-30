@@ -32,6 +32,15 @@ late_start_hour = 0
 late_end_hour = 5
 late_remind_cooldown_secs = 7200
 
+# 群消息违禁词撤回：enabled 开启后，消息包含 forbidden_words 任意词会自动撤回。
+# forbidden_words 留空时不会撤回；Bot 需要是群管理员，NapCat 需要能收到 message_id。
+# warn = true 会在撤回后 @ 发言人提醒，想静默撤回可改成 false。
+[moderation]
+enabled = true
+forbidden_words = []
+recall = true
+warn = true
+
 [[repositories]]
 # GitHub 名称：填写用户名或组织名，例如 https://github.com/owner/repo 里的 owner。
 github = "owner"

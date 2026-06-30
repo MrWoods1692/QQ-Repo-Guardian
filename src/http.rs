@@ -14,7 +14,7 @@ use serde_json::json;
 use sha2::Sha256;
 
 use crate::{
-    config::{GithubConfig, NotifyTarget},
+    config::{GithubConfig, ModerationConfig, NotifyTarget},
     github,
     notifier::Notifier,
     qq::{self, MemberCard, MemberCardKind},
@@ -28,6 +28,7 @@ pub struct AppState {
     github_client: reqwest::Client,
     schedule: Option<Arc<ScheduleRuntime>>,
     public_base_url: Arc<str>,
+    moderation: Arc<ModerationConfig>,
 }
 
 impl AppState {
@@ -37,6 +38,7 @@ impl AppState {
         github_client: reqwest::Client,
         schedule: Option<Arc<ScheduleRuntime>>,
         public_base_url: String,
+        moderation: ModerationConfig,
     ) -> Self {
         Self {
             github,
@@ -44,6 +46,7 @@ impl AppState {
             github_client,
             schedule,
             public_base_url: public_base_url.into(),
+            moderation: Arc::new(moderation),
         }
     }
 }
@@ -121,6 +124,8 @@ struct QqEvent {
     notice_type: Option<String>,
     sub_type: Option<String>,
     message: Option<String>,
+    raw_message: Option<String>,
+    message_id: Option<i64>,
     user_id: Option<i64>,
     self_id: Option<i64>,
     group_id: Option<i64>,
@@ -128,6 +133,12 @@ struct QqEvent {
 }
 
 async fn qq_event(State(state): State<AppState>, Json(event): Json<QqEvent>) -> impl IntoResponse {
+    if event.post_type.as_deref() == Some("message")
+        && let Some(response) = moderate_qq_message(&state, &event).await
+    {
+        return response;
+    }
+
     if event.post_type.as_deref() == Some("message")
         && let (Some(schedule), Some(group_id)) = (&state.schedule, event.group_id)
         && let Err(error) = schedule.maybe_send_late_reminder(group_id).await
@@ -183,6 +194,77 @@ async fn qq_event(State(state): State<AppState>, Json(event): Json<QqEvent>) -> 
         )
             .into_response(),
     }
+}
+
+async fn moderate_qq_message(
+    state: &AppState,
+    event: &QqEvent,
+) -> Option<axum::response::Response> {
+    let group_id = event.group_id?;
+    if !configured_group_ids(&state.github).contains(&group_id) {
+        return None;
+    }
+    let message = event.raw_message.as_deref().or(event.message.as_deref())?;
+    let matched_word = state.moderation.matched_word(message)?;
+    let Some(message_id) = event.message_id else {
+        tracing::warn!(
+            group_id,
+            user_id = event.user_id,
+            matched_word,
+            "forbidden-word message has no message_id to recall"
+        );
+        return Some(
+            (
+                StatusCode::ACCEPTED,
+                Json(json!({ "missing_message_id": true })),
+            )
+                .into_response(),
+        );
+    };
+
+    if state.moderation.recall
+        && let Err(error) = state.notifier.delete_message(message_id).await
+    {
+        return Some(
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": error.to_string() })),
+            )
+                .into_response(),
+        );
+    }
+
+    if state.moderation.warn {
+        let user_id = event.user_id.unwrap_or_default();
+        let warning_text = if state.moderation.recall {
+            "请注意群内发言，消息包含违禁词已撤回。"
+        } else {
+            "请注意群内发言，消息包含违禁词。"
+        };
+        let warning = format!("[CQ:at,qq={user_id}] {warning_text}");
+        if let Err(error) = state
+            .notifier
+            .send_direct(&NotifyTarget::Group { id: group_id }, &warning)
+            .await
+        {
+            return Some(
+                (
+                    StatusCode::BAD_GATEWAY,
+                    Json(json!({ "error": error.to_string() })),
+                )
+                    .into_response(),
+            );
+        }
+    }
+
+    tracing::info!(
+        group_id,
+        message_id,
+        user_id = event.user_id,
+        matched_word,
+        "recalled forbidden-word message"
+    );
+    Some((StatusCode::OK, Json(json!({ "recalled": true }))).into_response())
 }
 
 #[derive(Debug, Deserialize)]
@@ -434,7 +516,7 @@ mod tests {
     use super::*;
     use crate::{
         bot::MockBot,
-        config::{FeatureConfig, RepositoryConfig, SimpleRepositoryConfig},
+        config::{FeatureConfig, ModerationConfig, RepositoryConfig, SimpleRepositoryConfig},
     };
     use axum::{
         body::Body,
@@ -443,6 +525,16 @@ mod tests {
     use tower::ServiceExt;
 
     fn test_state() -> AppState {
+        test_state_with_bot_and_moderation(
+            Arc::new(MockBot::default()),
+            ModerationConfig::default(),
+        )
+    }
+
+    fn test_state_with_bot_and_moderation(
+        bot: Arc<MockBot>,
+        moderation: ModerationConfig,
+    ) -> AppState {
         let github = GithubConfig {
             webhook_secret: None,
             default_features: FeatureConfig::default(),
@@ -456,10 +548,11 @@ mod tests {
         };
         AppState::new(
             Arc::new(github),
-            Arc::new(Notifier::new(Arc::new(MockBot::default()))),
+            Arc::new(Notifier::new(bot)),
             reqwest::Client::new(),
             None,
             "http://127.0.0.1:8080".to_string(),
+            moderation,
         )
     }
 
@@ -503,6 +596,8 @@ mod tests {
             notice_type: None,
             sub_type: None,
             message: Some("[CQ:at,qq=123] ping".to_string()),
+            raw_message: Some("[CQ:at,qq=123] ping".to_string()),
+            message_id: Some(1),
             user_id: Some(42),
             self_id: Some(123),
             group_id: Some(100),
@@ -523,6 +618,8 @@ mod tests {
             notice_type: None,
             sub_type: None,
             message: Some("[CQ:at,qq=999] ping".to_string()),
+            raw_message: Some("[CQ:at,qq=999] ping".to_string()),
+            message_id: Some(1),
             user_id: Some(42),
             self_id: Some(123),
             group_id: Some(100),
@@ -540,6 +637,8 @@ mod tests {
             notice_type: Some("group_increase".to_string()),
             sub_type: Some("approve".to_string()),
             message: None,
+            raw_message: None,
+            message_id: None,
             user_id: Some(42),
             self_id: Some(123),
             group_id: Some(100),
@@ -561,6 +660,8 @@ mod tests {
             notice_type: Some("group_decrease".to_string()),
             sub_type: Some("leave".to_string()),
             message: None,
+            raw_message: None,
+            message_id: None,
             user_id: Some(42),
             self_id: Some(123),
             group_id: Some(100),
@@ -582,6 +683,8 @@ mod tests {
             notice_type: Some("group_increase".to_string()),
             sub_type: Some("approve".to_string()),
             message: None,
+            raw_message: None,
+            message_id: None,
             user_id: Some(42),
             self_id: Some(123),
             group_id: Some(999),
@@ -592,5 +695,38 @@ mod tests {
             qq_member_notice(&config, &event, "http://127.0.0.1:8080"),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn recalls_forbidden_word_group_message() {
+        let bot = Arc::new(MockBot::default());
+        let state = test_state_with_bot_and_moderation(
+            bot.clone(),
+            ModerationConfig {
+                enabled: true,
+                forbidden_words: vec!["badword".to_string()],
+                recall: true,
+                warn: true,
+            },
+        );
+        let payload = r#"{"post_type":"message","message_type":"group","group_id":100,"user_id":42,"message_id":88,"message":"hello badword","raw_message":"hello badword"}"#;
+
+        let response = router(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/qq/event")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(payload))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(bot.deleted_messages(), vec![88]);
+        let messages = bot.messages();
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].1.contains("消息包含违禁词已撤回"));
     }
 }

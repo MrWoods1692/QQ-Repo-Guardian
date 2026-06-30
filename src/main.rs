@@ -73,7 +73,14 @@ async fn main() -> anyhow::Result<()> {
     } else {
         None
     };
-    let state = http::AppState::new(github, notifier, github_client, schedule, public_base_url);
+    let state = http::AppState::new(
+        github,
+        notifier,
+        github_client,
+        schedule,
+        public_base_url,
+        config.moderation,
+    );
 
     tracing::info!(%address, "starting qq-repo-guardian");
     http::serve(address, state).await

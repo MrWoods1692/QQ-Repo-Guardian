@@ -9,6 +9,7 @@ pub struct AppConfig {
     pub github: GithubConfig,
     pub poller: PollerConfig,
     pub schedule: ScheduleConfig,
+    pub moderation: ModerationConfig,
 }
 
 impl AppConfig {
@@ -34,6 +35,8 @@ struct RawAppConfig {
     #[serde(default)]
     schedule: ScheduleConfig,
     #[serde(default)]
+    moderation: ModerationConfig,
+    #[serde(default)]
     github: RawGithubConfig,
 }
 
@@ -54,6 +57,7 @@ impl From<RawAppConfig> for AppConfig {
             bot: config.bot,
             poller: config.poller,
             schedule: config.schedule,
+            moderation: config.moderation.normalized(),
             github: GithubConfig {
                 webhook_secret: config.github.webhook_secret,
                 default_features: config.github.default_features,
@@ -65,6 +69,51 @@ impl From<RawAppConfig> for AppConfig {
                 },
             },
         }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ModerationConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub forbidden_words: Vec<String>,
+    #[serde(default = "enabled")]
+    pub recall: bool,
+    #[serde(default = "enabled")]
+    pub warn: bool,
+}
+
+impl Default for ModerationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            forbidden_words: Vec::new(),
+            recall: true,
+            warn: true,
+        }
+    }
+}
+
+impl ModerationConfig {
+    fn normalized(mut self) -> Self {
+        self.forbidden_words = self
+            .forbidden_words
+            .into_iter()
+            .map(|word| word.trim().to_string())
+            .filter(|word| !word.is_empty())
+            .collect();
+        self
+    }
+
+    pub fn matched_word<'a>(&'a self, message: &str) -> Option<&'a str> {
+        if !self.enabled || self.forbidden_words.is_empty() {
+            return None;
+        }
+        self.forbidden_words
+            .iter()
+            .find(|word| message.contains(word.as_str()))
+            .map(String::as_str)
     }
 }
 
@@ -396,5 +445,25 @@ privates = [42]
             ]
         );
         assert!(config.poller.enabled);
+        assert!(!config.moderation.enabled);
+    }
+
+    #[test]
+    fn parses_moderation_config() {
+        let config: RawAppConfig = toml::from_str(
+            r#"
+[moderation]
+enabled = true
+forbidden_words = [" spam ", ""]
+recall = true
+warn = false
+"#,
+        )
+        .unwrap();
+        let config = AppConfig::from(config);
+
+        assert_eq!(config.moderation.forbidden_words, vec!["spam"]);
+        assert_eq!(config.moderation.matched_word("hello spam"), Some("spam"));
+        assert!(!config.moderation.warn);
     }
 }

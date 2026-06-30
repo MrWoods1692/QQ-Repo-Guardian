@@ -190,6 +190,10 @@ impl Notifier {
         self.bot.sign_group(group_id).await
     }
 
+    pub async fn delete_message(&self, message_id: i64) -> anyhow::Result<()> {
+        self.bot.delete_message(message_id).await
+    }
+
     fn render_message(&self, notification: &Notification) -> String {
         if let (Some(base_url), Some(card)) = (&self.public_base_url, &notification.card) {
             return format!(
