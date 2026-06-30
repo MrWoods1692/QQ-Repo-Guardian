@@ -526,22 +526,45 @@ fn wrap_text(value: &str, max_chars: usize, max_lines: usize) -> Vec<String> {
 
     let mut lines = Vec::new();
     let mut current = String::new();
-    for word in split_wrappable(trimmed) {
-        let separator = if current.is_empty() || word.chars().all(|ch| !ch.is_ascii()) {
-            ""
-        } else {
-            " "
-        };
-        let next_len = current.chars().count() + separator.chars().count() + word.chars().count();
-        if !current.is_empty() && next_len > max_chars {
-            lines.push(current);
-            current = word;
-            if lines.len() + 1 == max_lines {
-                break;
+    let mut truncated = false;
+
+    'words: for word in split_wrappable(trimmed) {
+        let mut remaining = word.as_str();
+        let mut needs_separator = !current.is_empty() && word.chars().all(|ch| ch.is_ascii());
+
+        while !remaining.is_empty() {
+            let separator_len = usize::from(needs_separator);
+            let current_len = current.chars().count();
+            if current_len + separator_len >= max_chars {
+                lines.push(current);
+                current = String::new();
+                needs_separator = false;
+                if lines.len() == max_lines {
+                    truncated = true;
+                    break 'words;
+                }
+                continue;
             }
-        } else {
-            current.push_str(separator);
-            current.push_str(&word);
+
+            let available = max_chars - current_len - separator_len;
+            let remaining_len = remaining.chars().count();
+            let take_len = available.min(remaining_len);
+            let chunk = remaining.chars().take(take_len).collect::<String>();
+            if needs_separator {
+                current.push(' ');
+            }
+            current.push_str(&chunk);
+            remaining = &remaining[chunk.len()..];
+            needs_separator = false;
+
+            if !remaining.is_empty() {
+                lines.push(current);
+                current = String::new();
+                if lines.len() == max_lines {
+                    truncated = true;
+                    break 'words;
+                }
+            }
         }
     }
     if !current.is_empty() && lines.len() < max_lines {
@@ -550,9 +573,7 @@ fn wrap_text(value: &str, max_chars: usize, max_lines: usize) -> Vec<String> {
     if lines.is_empty() {
         lines.push(truncate_for_card(trimmed, max_chars));
     }
-    if trimmed.chars().count() > lines.iter().map(|line| line.chars().count()).sum::<usize>()
-        && let Some(last) = lines.last_mut()
-    {
+    if truncated && let Some(last) = lines.last_mut() {
         *last = truncate_for_card(last, max_chars.saturating_sub(1));
     }
     lines
@@ -884,7 +905,7 @@ mod tests {
     }
 
     #[test]
-    fn clips_long_repo_card_about_text() {
+    fn wraps_long_repo_card_about_text() {
         let card = RepositoryCard {
             owner: "owner".to_string(),
             name: "project".to_string(),
@@ -892,7 +913,7 @@ mod tests {
             url: "https://github.com/owner/project".to_string(),
             avatar_url: "https://avatars.githubusercontent.com/u/1?v=4".to_string(),
             avatar_data_uri: None,
-            about: "A very long repository description with many details about integrations, automation, dashboards, notifications, scheduling, monitoring, and release workflows".to_string(),
+            about: "supercalifragilisticexpialidocioussupercalifragilisticexpialidocious repository automation".to_string(),
             stars: 15320,
             forks: 821,
             issues: 12,
@@ -903,7 +924,12 @@ mod tests {
 
         assert!(svg.contains("clipPath id=\"aboutClip\""));
         assert!(svg.contains("clip-path=\"url(#aboutClip)\""));
-        assert!(!svg.contains("release workflows"));
+        assert!(svg.contains(
+            r#"<tspan x="58" y="238">supercalifragilisticexpialidocioussupercalifragi</tspan>"#
+        ));
+        assert!(svg.contains(
+            r#"<tspan x="58" y="259">listicexpialidocious repository automation</tspan>"#
+        ));
     }
 
     #[test]
