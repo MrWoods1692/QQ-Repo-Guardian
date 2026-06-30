@@ -97,10 +97,35 @@ mod napcat_client {
                 request = request.bearer_auth(token);
             }
 
-            let status = request.send().await?.error_for_status()?.status();
-            tracing::debug!(%url, %status, "sent message through NapCat");
+            let response = request.send().await?.error_for_status()?;
+            let status = response.status();
+            let body = response.text().await?;
+            validate_napcat_response(&body)
+                .with_context(|| format!("NapCat action {action} failed"))?;
+            tracing::debug!(%url, %status, "sent action through NapCat");
             Ok(())
         }
+    }
+
+    fn validate_napcat_response(body: &str) -> anyhow::Result<()> {
+        if body.trim().is_empty() {
+            return Ok(());
+        }
+
+        let value: serde_json::Value = serde_json::from_str(body)
+            .with_context(|| format!("invalid NapCat JSON response: {body}"))?;
+        let status = value["status"].as_str().unwrap_or_default();
+        let retcode = value["retcode"].as_i64().unwrap_or_default();
+        if status.eq_ignore_ascii_case("failed") || retcode != 0 {
+            let message = value["message"]
+                .as_str()
+                .or_else(|| value["wording"].as_str())
+                .or_else(|| value["msg"].as_str())
+                .unwrap_or("unknown NapCat error");
+            anyhow::bail!("retcode={retcode}, status={status}, message={message}");
+        }
+
+        Ok(())
     }
 
     #[async_trait]
@@ -256,6 +281,28 @@ mod napcat_client {
         }
         request.send().await?.error_for_status()?;
         Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::validate_napcat_response;
+
+        #[test]
+        fn accepts_successful_napcat_response() {
+            validate_napcat_response(r#"{"status":"ok","retcode":0,"data":{}}"#).unwrap();
+        }
+
+        #[test]
+        fn rejects_failed_napcat_response() {
+            let error = validate_napcat_response(
+                r#"{"status":"failed","retcode":1200,"message":"group sign failed"}"#,
+            )
+            .unwrap_err()
+            .to_string();
+
+            assert!(error.contains("retcode=1200"));
+            assert!(error.contains("group sign failed"));
+        }
     }
 }
 
