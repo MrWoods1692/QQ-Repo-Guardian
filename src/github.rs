@@ -346,51 +346,66 @@ pub fn render_repo_card_png(card: &RepositoryCard) -> anyhow::Result<Vec<u8>> {
 
 pub fn render_change_card_svg(card: &ChangeCard) -> String {
     let commit_rows = render_change_commit_rows(&card.commits);
+    let detail = change_card_detail(card);
+    let commit_note = change_card_commit_note(card.commits.len());
     format!(
-        r##"<svg xmlns="http://www.w3.org/2000/svg" width="820" height="460" viewBox="0 0 820 460">
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="860" height="520" viewBox="0 0 860 520">
   <defs>
     <linearGradient id="changeBg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#0891b2"/>
-      <stop offset="0.52" stop-color="#2563eb"/>
-      <stop offset="1" stop-color="#7c3aed"/>
+            <stop offset="0" stop-color="#047857"/>
+            <stop offset="0.48" stop-color="#2563eb"/>
+            <stop offset="1" stop-color="#c2410c"/>
     </linearGradient>
     <linearGradient id="changePanel" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#ffffff" stop-opacity="0.98"/>
       <stop offset="1" stop-color="#f8fafc" stop-opacity="0.94"/>
     </linearGradient>
+        <linearGradient id="changeAccent" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="#22c55e"/>
+            <stop offset="0.52" stop-color="#3b82f6"/>
+            <stop offset="1" stop-color="#f97316"/>
+        </linearGradient>
     <filter id="changeShadow" x="-10%" y="-10%" width="120%" height="130%">
       <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#0f172a" flood-opacity="0.26"/>
     </filter>
   </defs>
-    <rect width="820" height="460" rx="28" fill="url(#changeBg)"/>
-    <path d="M70 96 C142 26 260 24 342 82 C436 150 520 110 606 56 C668 17 744 35 792 94 L792 0 L0 0 L0 154 C20 137 42 117 70 96Z" fill="#ffffff" opacity="0.14"/>
-    <path d="M650 388 C696 346 752 338 820 366 L820 460 L600 460 C600 430 616 408 650 388Z" fill="#fde68a" opacity="0.23"/>
-    <rect x="38" y="38" width="744" height="384" rx="22" fill="url(#changePanel)" filter="url(#changeShadow)"/>
-    <rect x="64" y="66" width="146" height="38" rx="19" fill="#dbeafe"/>
-    <path d="M85 77v11h11M96 88l-14 14M100 76h16v16" fill="none" stroke="#1d4ed8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-    <text x="124" y="91" fill="#1d4ed8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="800">CHANGE</text>
-    <text x="64" y="146" fill="#0f172a" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="34" font-weight="850">{}</text>
-    <text x="64" y="181" fill="#475569" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="20" font-weight="650">{}</text>
-    <rect x="64" y="216" width="168" height="68" rx="14" fill="#eff6ff"/>
-    <rect x="248" y="216" width="168" height="68" rx="14" fill="#f0fdf4"/>
-    <rect x="432" y="216" width="286" height="68" rx="14" fill="#fdf2f8"/>
-    <path d="M88 238l8 8-8 8M106 254h16" fill="none" stroke="#1d4ed8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-    <text x="86" y="269" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="850">{}</text>
-    <circle cx="278" cy="246" r="11" fill="none" stroke="#15803d" stroke-width="3"/><path d="M278 257v8M266 265h24" stroke="#15803d" stroke-width="3" stroke-linecap="round"/>
-    <text x="302" y="269" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="850">{}</text>
-    <path d="M456 236h22v20h-22zM462 242h10" fill="none" stroke="#be185d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-    <text x="486" y="269" fill="#0f172a" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="20" font-weight="850">{}</text>
-    <text x="64" y="326" fill="#334155" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="20" font-weight="750">RECENT COMMITS</text>
-  {}
-  <text x="64" y="398" fill="#2563eb" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17">{}</text>
+        <rect width="860" height="520" rx="30" fill="url(#changeBg)"/>
+        <path d="M0 124 C92 58 178 42 276 86 C382 134 452 102 548 54 C648 4 760 28 860 98 L860 0 L0 0Z" fill="#ffffff" opacity="0.15"/>
+        <path d="M674 444 C720 388 790 374 860 402 L860 520 L616 520 C616 486 638 462 674 444Z" fill="#fed7aa" opacity="0.25"/>
+        <rect x="40" y="40" width="780" height="440" rx="24" fill="url(#changePanel)" filter="url(#changeShadow)"/>
+        <rect x="40" y="40" width="780" height="7" rx="3" fill="url(#changeAccent)"/>
+        <rect x="68" y="70" width="178" height="40" rx="20" fill="#dcfce7"/>
+        <path d="M90 82v12h12M102 94l-15 15M108 82h18v18" fill="none" stroke="#15803d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        <text x="134" y="96" fill="#166534" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="850">仓库有新变化</text>
+        <text x="68" y="154" fill="#0f172a" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="34" font-weight="850">{}</text>
+        <text x="68" y="188" fill="#475569" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="19" font-weight="650">{}</text>
+        <rect x="68" y="220" width="218" height="74" rx="14" fill="#eff6ff"/>
+        <rect x="306" y="220" width="218" height="74" rx="14" fill="#f0fdf4"/>
+        <rect x="544" y="220" width="208" height="74" rx="14" fill="#fff7ed"/>
+        <path d="M94 243l8 8-8 8M112 259h18" fill="none" stroke="#2563eb" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        <text x="144" y="246" fill="#1d4ed8" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="14" font-weight="850">目标分支</text>
+        <text x="144" y="274" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="850">{}</text>
+        <circle cx="332" cy="257" r="15" fill="none" stroke="#16a34a" stroke-width="3"/><path d="M332 242v17M322 262h20" stroke="#16a34a" stroke-width="3" stroke-linecap="round"/>
+        <text x="368" y="246" fill="#15803d" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="14" font-weight="850">推送者</text>
+        <text x="368" y="274" fill="#0f172a" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="850">{}</text>
+        <path d="M572 240h24v22h-24zM578 247h12M578 255h9" fill="none" stroke="#ea580c" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        <text x="610" y="246" fill="#c2410c" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="14" font-weight="850">变化摘要</text>
+        <text x="610" y="274" fill="#0f172a" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="20" font-weight="850">{}</text>
+        <text x="68" y="334" fill="#334155" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="20" font-weight="850">最近提交明细</text>
+        <text x="210" y="334" fill="#64748b" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="600">{}</text>
+    {}
+    <rect x="68" y="436" width="684" height="28" rx="14" fill="#eef2ff"/>
+    <path d="M90 445h13a8 8 0 0 1 8 8v0a8 8 0 0 1-8 8H90zM103 453h20" fill="none" stroke="#2563eb" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="132" y="456" fill="#2563eb" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">查看完整对比：{}</text>
 </svg>"##,
-        escape_html(&truncate_for_card(&card.title, 42)),
+        escape_html(&truncate_for_card(&card.title, 32)),
         escape_html(&truncate_for_card(&card.repository, 56)),
         escape_html(&truncate_for_card(&card.branch, 18)),
         escape_html(&truncate_for_card(&card.actor, 18)),
-        escape_html(&truncate_for_card(&card.summary, 30)),
+        escape_html(&truncate_for_card(&detail, 18)),
+        escape_html(&commit_note),
         commit_rows,
-        escape_html(&truncate_for_card(&card.url, 78)),
+        escape_html(&truncate_middle(&card.url, 74)),
     )
 }
 
@@ -449,7 +464,8 @@ pub fn change_card_from_query(query: &str) -> ChangeCard {
 
 fn render_change_commit_rows(commits: &[ChangeCommit]) -> String {
     if commits.is_empty() {
-        return r##"<text x="64" y="356" fill="#64748b" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18">No commit detail available.</text>"##.to_string();
+        return r##"<rect x="68" y="354" width="684" height="54" rx="12" fill="#f8fafc"/>
+  <text x="92" y="388" fill="#64748b" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="650">暂时没有拿到提交明细，请打开对比链接查看完整变化。</text>"##.to_string();
     }
 
     commits
@@ -457,23 +473,51 @@ fn render_change_commit_rows(commits: &[ChangeCommit]) -> String {
         .take(3)
         .enumerate()
         .map(|(index, commit)| {
-            let y = 356 + index * 25;
+            let y = 356 + index * 36;
             let author = if commit.author.is_empty() {
                 String::new()
             } else {
-                format!(" · {}", commit.author)
+                format!("由 {} 提交", commit.author)
             };
             format!(
-                r##"<text x="64" y="{}" fill="#0f172a" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="650">{}</text>"##,
+                r##"<rect x="68" y="{}" width="684" height="30" rx="10" fill="{}"/>
+  <circle cx="90" cy="{}" r="11" fill="{}"/>
+  <text x="86" y="{}" fill="#ffffff" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="850">{}</text>
+  <text x="112" y="{}" fill="#0f172a" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="750">{}</text>
+  <text x="610" y="{}" fill="#64748b" font-family="Noto Sans CJK SC, Inter, Segoe UI, Arial, sans-serif" font-size="14" font-weight="700">{}</text>"##,
+                y - 22,
+                if index % 2 == 0 { "#f8fafc" } else { "#f1f5f9" },
+                y - 8,
+                ["#2563eb", "#16a34a", "#ea580c"][index],
+                y - 4,
+                index + 1,
                 y,
                 escape_html(&truncate_for_card(
-                    &format!("{}{}", commit.message, author),
-                    76,
-                ))
+                    commit.message.lines().next().unwrap_or("更新了代码"),
+                    54,
+                )),
+                y,
+                escape_html(&truncate_for_card(&author, 16))
             )
         })
         .collect::<Vec<_>>()
         .join("\n  ")
+}
+
+fn change_card_detail(card: &ChangeCard) -> String {
+    if card.summary.trim().is_empty() {
+        "已检测到更新".to_string()
+    } else {
+        card.summary.clone()
+    }
+}
+
+fn change_card_commit_note(count: usize) -> String {
+    match count {
+        0 => "暂无提交明细".to_string(),
+        1 => "已整理 1 条提交".to_string(),
+        value => format!("已整理最近 {value} 条提交"),
+    }
 }
 
 fn svg_to_png(svg: &str) -> anyhow::Result<Vec<u8>> {
@@ -734,23 +778,32 @@ fn push_notification(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let summary = push_summary(count);
     let message = format!(
-        "新的代码提交\n仓库: {}\n分支: {}\n提交数: {}\n提交者: {}\n{}",
-        repository.full_name, branch, count, actor, compare
+        "仓库检测到新变化\n仓库: {}\n分支: {}\n变化: {}\n推送者: {}\n提示: 已整理最近提交明细，点击图片或链接可查看完整对比。\n{}",
+        repository.full_name, branch, summary, actor, compare
     );
     Notification {
         repository: repository.full_name.clone(),
         feature: Feature::Pushes,
         message,
         card: Some(ChangeCard {
-            title: "新的代码提交".to_string(),
+            title: "仓库检测到新变化".to_string(),
             repository: repository.full_name.clone(),
             branch: branch.to_string(),
             actor: actor.to_string(),
-            summary: format!("{} commits pushed", count),
+            summary,
             url: compare.to_string(),
             commits,
         }),
+    }
+}
+
+fn push_summary(count: usize) -> String {
+    match count {
+        0 => "检测到分支更新".to_string(),
+        1 => "新增 1 个提交".to_string(),
+        value => format!("新增 {value} 个提交"),
     }
 }
 
@@ -960,7 +1013,7 @@ mod tests {
             repository: "owner/project".to_string(),
             branch: "main".to_string(),
             actor: "alice".to_string(),
-            summary: "2 commits pushed".to_string(),
+            summary: "新增 2 个提交".to_string(),
             url: "https://github.com/owner/project/compare/a...b".to_string(),
             commits: vec![ChangeCommit {
                 message: "fix card".to_string(),
@@ -972,5 +1025,52 @@ mod tests {
         let png = render_change_card_png(&card).unwrap();
 
         assert!(png.starts_with(&[0x89, b'P', b'N', b'G']));
+    }
+
+    #[test]
+    fn renders_friendly_change_card_svg() {
+        let card = ChangeCard {
+            title: "仓库检测到新变化".to_string(),
+            repository: "owner/project".to_string(),
+            branch: "main".to_string(),
+            actor: "alice".to_string(),
+            summary: "新增 2 个提交".to_string(),
+            url: "https://github.com/owner/project/compare/a...b".to_string(),
+            commits: vec![
+                ChangeCommit {
+                    message: "fix card text overflow".to_string(),
+                    author: "alice".to_string(),
+                    url: "https://github.com/owner/project/commit/a".to_string(),
+                },
+                ChangeCommit {
+                    message: "polish notification copy".to_string(),
+                    author: "bob".to_string(),
+                    url: "https://github.com/owner/project/commit/b".to_string(),
+                },
+            ],
+        };
+
+        let svg = render_change_card_svg(&card);
+
+        assert!(svg.contains("仓库有新变化"));
+        assert!(svg.contains("最近提交明细"));
+        assert!(svg.contains("新增 2 个提交"));
+        assert!(svg.contains("由 alice 提交"));
+        assert!(svg.contains("查看完整对比"));
+    }
+
+    #[test]
+    fn parses_push_with_friendly_change_summary() {
+        let payload = br#"{"ref":"refs/heads/main","compare":"https://github.com/octo/repo/compare/a...b","repository":{"full_name":"octo/repo","html_url":"https://github.com/octo/repo"},"sender":{"login":"alice"},"commits":[{"message":"fix card","url":"https://github.com/octo/repo/commit/a","author":{"name":"alice"}},{"message":"polish copy","url":"https://github.com/octo/repo/commit/b","author":{"name":"bob"}}]}"#;
+
+        let notification = parse_event("push", payload).unwrap().unwrap();
+
+        assert_eq!(notification.feature, Feature::Pushes);
+        assert!(notification.message.contains("仓库检测到新变化"));
+        assert!(notification.message.contains("变化: 新增 2 个提交"));
+        let card = notification.card.unwrap();
+        assert_eq!(card.title, "仓库检测到新变化");
+        assert_eq!(card.summary, "新增 2 个提交");
+        assert_eq!(card.commits.len(), 2);
     }
 }
