@@ -107,6 +107,25 @@ proxy = "http://127.0.0.1:12334"
 
 高级开关仍支持旧格式 `[github.default_features]`、`[[github.repositories]]`、`[github.repositories.features]` 和 `[[github.repositories.targets]]`，不需要时可以忽略。
 
+## 群定时任务
+
+程序可以给所有仓库配置里的 QQ 群执行定时任务：每天 9:00 群签到，早上发早安，中午发午安，晚上发晚安；凌晨有人在群里发言时，会按冷却时间随机提醒一句注意休息。程序如果在 9:00 后启动且当天还没签到，会自动补签；问候语只在对应时间附近发送，避免晚启动时连续补发早安、午安、晚安。
+
+```toml
+[schedule]
+enabled = true
+group_sign = true
+sign_time = "09:00"
+morning_time = "08:30"
+noon_time = "12:00"
+evening_time = "22:00"
+late_start_hour = 0
+late_end_hour = 5
+late_remind_cooldown_secs = 7200
+```
+
+早安、午安、晚安和凌晨休息提醒都从内置文案池随机组合生成，实际可随机出上万种句子，避免每天发同一句。
+
 ## 测试
 
 ```bash

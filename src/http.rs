@@ -17,6 +17,7 @@ use crate::{
     config::{GithubConfig, NotifyTarget},
     github,
     notifier::Notifier,
+    scheduler::ScheduleRuntime,
 };
 
 #[derive(Clone)]
@@ -24,6 +25,7 @@ pub struct AppState {
     github: Arc<GithubConfig>,
     notifier: Arc<Notifier>,
     github_client: reqwest::Client,
+    schedule: Option<Arc<ScheduleRuntime>>,
     public_base_url: Arc<str>,
 }
 
@@ -32,12 +34,14 @@ impl AppState {
         github: Arc<GithubConfig>,
         notifier: Arc<Notifier>,
         github_client: reqwest::Client,
+        schedule: Option<Arc<ScheduleRuntime>>,
         public_base_url: String,
     ) -> Self {
         Self {
             github,
             notifier,
             github_client,
+            schedule,
             public_base_url: public_base_url.into(),
         }
     }
@@ -120,6 +124,13 @@ struct QqEvent {
 }
 
 async fn qq_event(State(state): State<AppState>, Json(event): Json<QqEvent>) -> impl IntoResponse {
+    if event.post_type.as_deref() == Some("message")
+        && let (Some(schedule), Some(group_id)) = (&state.schedule, event.group_id)
+        && let Err(error) = schedule.maybe_send_late_reminder(group_id).await
+    {
+        tracing::warn!(group_id, ?error, "failed to send late-night reminder");
+    }
+
     let Some(reply) = qq_reply(&state.github, &event, &state.public_base_url) else {
         return (StatusCode::ACCEPTED, Json(json!({ "ignored": true }))).into_response();
     };
@@ -350,6 +361,7 @@ mod tests {
             Arc::new(github),
             Arc::new(Notifier::new(Arc::new(MockBot::default()))),
             reqwest::Client::new(),
+            None,
             "http://127.0.0.1:8080".to_string(),
         )
     }

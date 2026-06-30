@@ -12,8 +12,10 @@ anyhow = "1"
 async-trait = "0.1"
 axum = { version = "0.8", features = ["macros"] }
 base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clap = { version = "4", features = ["derive", "env"] }
 hmac = "0.12"
+rand = "0.9"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 proc_qq = { git = "https://github.com/niuhuan/rust_proc_qq.git", rev = "afb89615be09ed8e0f05add55ca8fac8104ddc09", default-features = false, features = ["connect_handler", "console_qr"], optional = true }
 resvg = "0.45"

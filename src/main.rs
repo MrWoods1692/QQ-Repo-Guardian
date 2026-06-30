@@ -4,6 +4,7 @@ use anyhow::Context;
 use clap::Parser;
 use qq_repo_guardian::{
     bot, config::AppConfig, http, notifier::Notifier, poller::GithubPagePoller,
+    scheduler::ScheduleRuntime,
 };
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -26,6 +27,7 @@ async fn main() -> anyhow::Result<()> {
         AppConfig::load(&args.config).with_context(|| format!("failed to load {}", args.config))?;
     let address: SocketAddr = config.server.bind.parse().context("invalid server.bind")?;
     let bot = bot::from_config(&config.bot).context("failed to initialize bot client")?;
+    let schedule_config = config.schedule.clone();
     let github = Arc::new(config.github);
     let public_base_url = std::env::var("QRG_SERVER_URL")
         .ok()
@@ -50,7 +52,28 @@ async fn main() -> anyhow::Result<()> {
         )?);
         tokio::spawn(poller.run(poll_interval));
     }
-    let state = http::AppState::new(github, notifier, github_client, public_base_url);
+    let schedule = if schedule_config.enabled {
+        let targets = github
+            .repositories
+            .iter()
+            .flat_map(|repository| repository.targets.iter().cloned())
+            .collect::<Vec<_>>();
+        let schedule = Arc::new(ScheduleRuntime::new(
+            schedule_config,
+            notifier.clone(),
+            &targets,
+        ));
+        if schedule.has_groups() {
+            tokio::spawn(schedule.clone().run());
+            Some(schedule)
+        } else {
+            tracing::warn!("schedule is enabled but no QQ groups are configured");
+            None
+        }
+    } else {
+        None
+    };
+    let state = http::AppState::new(github, notifier, github_client, schedule, public_base_url);
 
     tracing::info!(%address, "starting qq-repo-guardian");
     http::serve(address, state).await

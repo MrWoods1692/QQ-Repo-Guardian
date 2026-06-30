@@ -8,6 +8,7 @@ pub struct AppConfig {
     pub bot: BotConfig,
     pub github: GithubConfig,
     pub poller: PollerConfig,
+    pub schedule: ScheduleConfig,
 }
 
 impl AppConfig {
@@ -31,6 +32,8 @@ struct RawAppConfig {
     #[serde(default)]
     poller: PollerConfig,
     #[serde(default)]
+    schedule: ScheduleConfig,
+    #[serde(default)]
     github: RawGithubConfig,
 }
 
@@ -50,6 +53,7 @@ impl From<RawAppConfig> for AppConfig {
             server: config.server,
             bot: config.bot,
             poller: config.poller,
+            schedule: config.schedule,
             github: GithubConfig {
                 webhook_secret: config.github.webhook_secret,
                 default_features: config.github.default_features,
@@ -62,6 +66,72 @@ impl From<RawAppConfig> for AppConfig {
             },
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ScheduleConfig {
+    #[serde(default = "enabled")]
+    pub enabled: bool,
+    #[serde(default = "enabled")]
+    pub group_sign: bool,
+    #[serde(default = "default_sign_time")]
+    pub sign_time: String,
+    #[serde(default = "default_morning_time")]
+    pub morning_time: String,
+    #[serde(default = "default_noon_time")]
+    pub noon_time: String,
+    #[serde(default = "default_evening_time")]
+    pub evening_time: String,
+    #[serde(default = "default_late_start_hour")]
+    pub late_start_hour: u32,
+    #[serde(default = "default_late_end_hour")]
+    pub late_end_hour: u32,
+    #[serde(default = "default_late_remind_cooldown_secs")]
+    pub late_remind_cooldown_secs: u64,
+}
+
+impl Default for ScheduleConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            group_sign: true,
+            sign_time: default_sign_time(),
+            morning_time: default_morning_time(),
+            noon_time: default_noon_time(),
+            evening_time: default_evening_time(),
+            late_start_hour: default_late_start_hour(),
+            late_end_hour: default_late_end_hour(),
+            late_remind_cooldown_secs: default_late_remind_cooldown_secs(),
+        }
+    }
+}
+
+fn default_sign_time() -> String {
+    "09:00".to_string()
+}
+
+fn default_morning_time() -> String {
+    "08:30".to_string()
+}
+
+fn default_noon_time() -> String {
+    "12:00".to_string()
+}
+
+fn default_evening_time() -> String {
+    "22:00".to_string()
+}
+
+fn default_late_start_hour() -> u32 {
+    0
+}
+
+fn default_late_end_hour() -> u32 {
+    5
+}
+
+fn default_late_remind_cooldown_secs() -> u64 {
+    7200
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

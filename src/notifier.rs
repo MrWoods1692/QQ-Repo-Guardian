@@ -186,6 +186,10 @@ impl Notifier {
         self.bot.send(target, message).await
     }
 
+    pub async fn sign_group(&self, group_id: i64) -> anyhow::Result<()> {
+        self.bot.sign_group(group_id).await
+    }
+
     fn render_message(&self, notification: &Notification) -> String {
         if let (Some(base_url), Some(card)) = (&self.public_base_url, &notification.card) {
             return format!(

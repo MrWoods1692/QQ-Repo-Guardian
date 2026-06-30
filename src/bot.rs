@@ -29,6 +29,11 @@ use crate::config::{BotConfig, NotifyTarget};
 #[async_trait]
 pub trait BotClient: Send + Sync {
     async fn send(&self, target: &NotifyTarget, message: &str) -> anyhow::Result<()>;
+
+    async fn sign_group(&self, group_id: i64) -> anyhow::Result<()> {
+        let _ = group_id;
+        anyhow::bail!("current bot core does not support group sign")
+    }
 }
 
 pub fn from_config(config: &BotConfig) -> anyhow::Result<Arc<dyn BotClient>> {
@@ -117,6 +122,14 @@ mod napcat_client {
                     .await
                 }
             }
+        }
+
+        async fn sign_group(&self, group_id: i64) -> anyhow::Result<()> {
+            self.post(
+                "send_group_sign",
+                serde_json::json!({ "group_id": group_id }),
+            )
+            .await
         }
     }
 

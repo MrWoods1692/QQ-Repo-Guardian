@@ -19,6 +19,19 @@ interval_secs = 60
 timeout_secs = 10
 proxy = "http://127.0.0.1:12334"
 
+# 群定时任务：默认给所有仓库配置中的 QQ 群发送。程序如果在 09:00 后启动且当天还没签到，会自动补签。
+# 早安、午安、晚安只在对应时间附近发送；凌晨休息提醒会从内置文案池随机生成。
+[schedule]
+enabled = true
+group_sign = true
+sign_time = "09:00"
+morning_time = "08:30"
+noon_time = "12:00"
+evening_time = "22:00"
+late_start_hour = 0
+late_end_hour = 5
+late_remind_cooldown_secs = 7200
+
 [[repositories]]
 # GitHub 名称：填写用户名或组织名，例如 https://github.com/owner/repo 里的 owner。
 github = "owner"
